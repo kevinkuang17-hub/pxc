@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ s.site_name or '订阅' }}</title><meta name="robots" content="noindex,nofollow">
+<style>
+:root{--c:{{ s.theme_color or '#2563eb' }};--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--text:#1f2937;--muted:#6b7280}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--line:#262b35;--text:#e5e7eb;--muted:#9aa3b2}}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.w{max-width:560px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:18px;margin:6px 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.k{color:var(--muted);font-size:13px}.bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;background:var(--c)}
+a.app{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:8px 0;color:var(--text);text-decoration:none}
+a.app b{color:var(--c);font-weight:500}.app.rec{border-color:var(--c)}
+.qr{text-align:center}.qr svg{width:200px;height:200px;background:#fff;padding:6px;border-radius:8px}
+code{word-break:break-all;font-size:12px}.btn{background:var(--c);color:#fff;border:0;padding:8px 14px;border-radius:8px;font-size:14px}
+ol{padding-left:20px;margin:6px 0}.muted{color:var(--muted);font-size:13px}
+</style></head><body><div class="w">
+<h1>{{ s.site_name or '订阅' }}</h1>
+<div class="card">
+  {% if not c.active %}<p style="color:#dc2626">{{ {'quota':'本周期流量已用完','expired':'已到期'}.get(c.reason, '账号已停用') }}，请联系管理员。</p>{% endif %}
+  <div class="k">已用流量</div>
+  <div>{{ hb(c.upload + c.download) }} / {{ hb(c.total) if c.total else '不限' }}</div>
+  {% if c.total %}<div class="bar"><i style="width:{{ [100, ((c.upload + c.download) * 100 / c.total)|int]|min }}%"></i></div>{% endif %}
+  <div class="k" style="margin-top:6px">到期</div>
+  <div id="exp">{{ '不过期' if not c.expire else '' }}</div>
+  <div class="k" style="margin-top:6px">可用线路 {{ nodes|length }} 条</div>
+</div>
+<div class="card"><div class="k">点一下导入到客户端（会自动设置更新）</div>
+  {% for name, link, plat in links %}<a class="app" data-name="{{ name }}" href="{{ link }}"><span>{{ name }}<br><span class="muted">{{ plat }}</span></span><b>导入</b></a>{% endfor %}
+</div>
+<div class="card qr"><div class="k" style="text-align:left">或者用客户端扫码</div>{{ qr|safe }}
+  <p><code id="u">{{ url }}</code></p><button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('u').innerText);this.textContent='已复制'">复制订阅地址</button></div>
+<div class="card"><div class="k">开启自动更新（只需设置一次）</div><ol>
+  <li><b>Clash Verge / FlClash / Mihomo Party</b>：导入后自动按服务器建议的间隔更新。</li>
+  <li><b>v2rayNG</b>：设置 → 订阅分组设置 → 打开“自动更新”。</li>
+  <li><b>Shadowrocket</b>：设置 → 订阅 → 打开“打开时更新”和“自动后台更新”。</li>
+  <li><b>Happ / v2rayN</b>：订阅分组里设置更新间隔（如 12 小时）。</li></ol>
+  <p class="muted">线路有变化时客户端刷新订阅即可，不用重新导入。</p></div>
+{% if s.sub_footer %}<p class="muted" style="text-align:center">{{ s.sub_footer }}</p>{% endif %}
+</div>
+<script>
+{% if c.expire %}document.getElementById('exp').textContent=new Date({{ c.expire }}*1000).toLocaleDateString();{% endif %}
+(function(){var u=navigator.userAgent,rec=/iPhone|iPad|Macintosh/.test(u)?['Shadowrocket','Happ']:/Android/.test(u)?['Clash Verge / Mihomo Party / FlClash','Happ','v2rayNG']:['Clash Verge / Mihomo Party / FlClash'];
+document.querySelectorAll('a.app').forEach(function(a){if(rec.indexOf(a.dataset.name)>=0){a.classList.add('rec');a.parentNode.insertBefore(a,a.parentNode.children[1])}})})();
+</script></body></html>

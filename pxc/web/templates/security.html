@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block h1 %}安全与对接{% endblock %}{% block body %}
+<div class="card"><h2>CRM 对接</h2>
+  <p>CRM 接口令牌：{{ '已设置' if has_api else '未设置' }} · <a class="btn sm" href="{{ url_for('admin.make_secret', kind='api') }}">{{ '重新生成' if has_api else '生成' }}</a></p>
+  <p>CRM 免登密钥：{{ '已设置' if has_sso else '未设置' }} · <a class="btn sm" href="{{ url_for('admin.make_secret', kind='sso') }}">{{ '重新生成' if has_sso else '生成' }}</a></p>
+  <p class="muted small">CRM 里“节点控制台”按钮：后端调用 <code>POST /api/v1/sso</code>（带接口令牌）拿到 60 秒一次性地址后跳转即可。接口说明见项目 docs/API.md。</p>
+</div>
+<div class="card"><h2>订阅节点</h2>
+  <div class="tbl"><table><thead><tr><th>名称</th><th>添加时间</th><th></th></tr></thead><tbody>
+  {% for n in sub_nodes %}<tr><td>{{ n.name }}</td><td>{{ n.created[:16] }}</td><td><form method="post" action="{{ url_for('admin.subnode_delete', idx=loop.index0) }}" data-confirm="吊销后这台订阅服务将无法同步（继续用缓存出旧数据）。确定？"><button class="btn sm d">吊销</button></form></td></tr>
+  {% else %}<tr><td colspan="3" class="muted">还没有独立订阅节点（控制台自己也能出订阅，用于测试）。</td></tr>{% endfor %}</tbody></table></div>
+  <p style="margin-top:10px"><a class="btn p" href="{{ url_for('admin.make_secret', kind='subnode') }}">＋ 添加订阅节点</a></p>
+</div>
+<div class="card"><h2>账号</h2>
+  <form method="post" class="f"><input type="hidden" name="act" value="password">
+    <div class="row"><label class="l">原密码</label><div><input type="password" name="old" required></div></div>
+    <div class="row"><label class="l">新密码</label><div><input type="password" name="new" minlength="10" required></div></div>
+    <div class="row"><span></span><div><button class="btn p">修改密码</button></div></div></form>
+  <p>二次认证：已绑定，剩余备用码 {{ backup_left }} 个 · <a class="btn sm" href="{{ url_for('admin.totp_setup', rebind=1) }}">重新绑定（会生成新备用码）</a></p>
+</div>
+<div class="card"><h2>在线会话</h2><div class="tbl"><table><thead><tr><th>登录方式</th><th>IP</th><th>设备</th><th>最近活动</th><th></th></tr></thead><tbody>
+{% for s in sessions %}<tr><td>{{ '免登' if s.via=='sso' else '密码' }}</td><td>{{ s.ip }}</td><td class="wrap small">{{ s.ua[:80] }}</td><td>{{ fmt_dt(s.last_active_at) }}</td>
+<td>{% if s.id == me %}<span class="tag c">当前</span>{% else %}<form method="post"><input type="hidden" name="act" value="revoke"><input type="hidden" name="sid" value="{{ s.id }}"><button class="btn sm d">强制下线</button></form>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><h2>登录日志</h2><div class="tbl"><table><thead><tr><th>时间</th><th>账号</th><th>IP</th><th>结果</th><th>设备</th></tr></thead><tbody>
+{% for l in logs %}<tr><td>{{ fmt_dt(l.created_at) }}</td><td>{{ l.username }}</td><td>{{ l.ip }}</td><td><span class="tag {{ 'ok' if l.ok else 'err' }}">{{ ('成功·' if l.ok else '失败·') ~ l.detail }}</span></td><td class="wrap small">{{ l.ua[:60] }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

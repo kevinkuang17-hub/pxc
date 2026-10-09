@@ -1,0 +1,28 @@
+{% extends "base.html" %}{% block h1 %}外观与通知{% endblock %}{% block body %}
+<form method="post" enctype="multipart/form-data" class="f">
+<div class="card"><h2>外观</h2>
+  <div class="row"><label class="l">站点名称</label><div><input type="text" name="site_name" maxlength="20" value="{{ v.site_name }}" placeholder="节点控制台"><div class="help">登录页标题、浏览器标签、后台左上角，≤ 20 字</div></div></div>
+  <div class="row"><label class="l">登录页标语</label><div><input type="text" name="login_slogan" maxlength="30" value="{{ v.login_slogan }}"></div></div>
+  <div class="row"><label class="l">主题色</label><div><input type="color" name="theme_color" value="{{ v.theme_color or '#2563eb' }}"></div></div>
+  <div class="row"><label class="l">页脚文字</label><div><input type="text" name="footer_text" value="{{ v.footer_text }}"></div></div>
+  {% for k, label, tip in [('logo','后台左上角 Logo','PNG / SVG'),('favicon','浏览器标签图标','PNG / ICO / SVG，建议 64×64'),('login_logo','登录页 Logo','PNG / SVG'),('login_bg','登录页背景','JPG / PNG / WebP，建议 1920×1080，≤ 5 MB')] %}
+  <div class="row"><label class="l">{{ label }}</label><div><input type="file" name="{{ k }}" accept="image/*">
+    {% if brand[k] %}<label class="small muted"><input type="checkbox" name="clear_{{ k }}" value="1"> 删除当前（{{ brand[k] }}）</label>{% endif %}
+    <div class="help">{{ tip }}</div></div></div>
+  {% endfor %}
+</div>
+<div class="card"><h2>订阅</h2>
+  <div class="row"><label class="l">订阅对外地址</label><div><input type="text" name="sub_public_url" value="{{ v.sub_public_url }}" placeholder="https://clbstar.vertex-astra.com"><div class="help">用户订阅链接的前缀，指向独立订阅服务（Cloudflare 小黄云）</div></div></div>
+  <div class="row"><label class="l">建议刷新间隔（小时）</label><div><input type="number" name="sub_update_hours" value="{{ v.sub_update_hours or 12 }}"></div></div>
+</div>
+<div class="card"><h2>通知</h2>
+  <div class="row"><label class="l">CRM Webhook 地址</label><div><input type="text" name="webhook_url" value="{{ v.webhook_url }}" placeholder="https://crm.example.com/hooks/pxc"><div class="help">流量 80% / 100%、即将到期、服务器离线、推送失败时 POST JSON；签名在请求头 X-PXC-Signature（HMAC-SHA256(时间戳.正文)）。{% if not has_secret %}<a href="{{ url_for('admin.make_secret', kind='webhook') }}">生成签名密钥</a>{% else %}签名密钥已设置，<a href="{{ url_for('admin.make_secret', kind='webhook') }}">重新生成</a>{% endif %}</div></div></div>
+  <div class="row"><label class="l">Telegram Bot Token</label><div><input type="text" name="tg_bot_token" value="{{ v.tg_bot_token }}"></div></div>
+  <div class="row"><label class="l">Telegram Chat ID</label><div><input type="text" name="tg_chat_id" value="{{ v.tg_chat_id }}"></div></div>
+</div>
+<div class="card"><h2>访问控制</h2>
+  <div class="row"><label class="l">后台 IP 白名单</label><div><textarea name="admin_ip_allowlist" placeholder="100.64.0.0/10&#10;1.2.3.4">{{ v.admin_ip_allowlist }}</textarea><div class="help">留空 = 不限制。只允许 Tailscale 可填 100.64.0.0/10。填错会把自己关在外面，可在服务器上执行 pxc 菜单清空。</div></div></div>
+  <div class="row"><label class="l">可信设备</label><div><label><input type="checkbox" name="allow_trusted_device" value="1" {% if v.allow_trusted_device != '0' %}checked{% endif %}> 允许“30 天内本设备免验证”</label></div></div>
+</div>
+<button class="btn p">保存设置</button>
+</form>{% endblock %}

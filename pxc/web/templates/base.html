@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}{{ site_name }}{% endblock %}</title>
+<meta name="robots" content="noindex,nofollow">
+{% if brand.favicon %}<link rel="icon" href="{{ url_for('admin.static_brand', name=brand.favicon) }}">{% endif %}
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ version }}">
+<style>:root{--c:{{ theme }}}</style>
+</head><body>
+{% set ep = request.endpoint or '' %}
+{% set res = request.view_args.get('res') if request.view_args else None %}
+<div class="layout">
+<aside class="side">
+  <div class="brand">{% if brand.logo %}<img src="{{ url_for('admin.static_brand', name=brand.logo) }}" alt="">{% endif %}{{ site_name }}</div>
+  <nav>
+    <a href="{{ url_for('admin.dash') }}" class="{{ 'on' if ep=='admin.dash' }}">概览</a>
+    <div class="sec">节点</div>
+    <a href="{{ url_for('admin.r_list', res='servers') }}" class="{{ 'on' if res=='servers' or ep.startswith('admin.server') }}">服务器</a>
+    <a href="{{ url_for('admin.r_list', res='inbounds') }}" class="{{ 'on' if res=='inbounds' }}">入站与落地</a>
+    <a href="{{ url_for('admin.r_list', res='outbounds') }}" class="{{ 'on' if res=='outbounds' or ep=='admin.quick_exit' }}">出站</a>
+    <a href="{{ url_for('admin.r_list', res='rules') }}" class="{{ 'on' if res=='rules' }}">路由规则</a>
+    <div class="sec">线路与用户</div>
+    <a href="{{ url_for('admin.r_list', res='lines') }}" class="{{ 'on' if res=='lines' or ep=='admin.quick_line' }}">线路</a>
+    <a href="{{ url_for('admin.r_list', res='groups') }}" class="{{ 'on' if res=='groups' }}">线路组</a>
+    <a href="{{ url_for('admin.r_list', res='plans') }}" class="{{ 'on' if res=='plans' }}">套餐</a>
+    <a href="{{ url_for('admin.r_list', res='clients') }}" class="{{ 'on' if res=='clients' or ep.startswith('admin.client') }}">用户</a>
+    <div class="sec">运维</div>
+    <a href="{{ url_for('admin.jobs') }}" class="{{ 'on' if ep=='admin.jobs' }}">推送任务</a>
+    <a href="{{ url_for('admin.audit_log') }}" class="{{ 'on' if ep=='admin.audit_log' }}">操作日志</a>
+    <a href="{{ url_for('admin.settings') }}" class="{{ 'on' if ep=='admin.settings' }}">外观与通知</a>
+    <a href="{{ url_for('admin.security') }}" class="{{ 'on' if ep=='admin.security' }}">安全与对接</a>
+  </nav>
+  <div class="ver">{{ version }}{% if build %} · {{ build[:10] }}{% endif %}</div>
+</aside>
+<div class="main">
+  <div class="top"><h1>{% block h1 %}{% endblock %}</h1>
+    <div class="who">{% if admin_user %}{{ admin_user.username }} · <a href="{{ url_for('admin.logout') }}">退出</a>{% endif %}</div></div>
+  <div class="content">{% block body %}{% endblock %}</div>
+  {% if footer %}<div class="foot">{{ footer }}</div>{% endif %}
+</div></div>
+
+{% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}
+{% set cat = msgs[-1][0] %}
+<div class="mask" id="flash"><div class="dlg {{ cat }}">
+  <h3>{{ {'ok':'操作成功','error':'没有成功','warn':'请注意'}.get(cat, '提示') }}</h3>
+  <div class="body" id="flashbody">{% for c, m in msgs %}{{ m }}{% if not loop.last %}
+{% endif %}{% endfor %}</div>
+  <div class="acts">
+    {% if cat == 'error' %}<button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('flashbody').innerText);this.textContent='已复制'">复制报错</button>{% endif %}
+    <button class="btn p" onclick="document.getElementById('flash').remove()">知道了</button>
+  </div></div></div>
+{% if cat == 'ok' %}<script>setTimeout(function(){var e=document.getElementById('flash');e&&e.remove()},3000)</script>{% endif %}
+{% endif %}{% endwith %}
+<script>
+document.addEventListener('submit',function(e){var f=e.target;if(f.dataset.confirm&&!confirm(f.dataset.confirm)){e.preventDefault()}});
+function copyText(id,btn){navigator.clipboard.writeText(document.getElementById(id).innerText);btn.textContent='已复制';setTimeout(function(){btn.textContent='复制'},1500)}
+</script>
+</body></html>

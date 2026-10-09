@@ -1,0 +1,8 @@
+{% extends "auth_base.html" %}{% block box %}
+<div class="slogan">{{ slogan or '请登录' }}</div>
+{% if err %}<div class="err">{{ err }}</div>{% endif %}
+<form method="post" autocomplete="on">
+  <input type="text" name="username" placeholder="账号" required autofocus>
+  <input type="password" name="password" placeholder="密码" required>
+  <button class="btn p">登录</button>
+</form>{% endblock %}

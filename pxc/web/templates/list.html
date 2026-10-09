@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block h1 %}{{ R.title }}{% endblock %}
+{% block body %}
+<div class="toolbar">
+  <a class="btn p" href="{{ url_for('admin.r_edit', res=res) }}">＋ 新增</a>
+  <form method="get" style="display:flex;gap:6px"><input type="text" name="q" value="{{ kw }}" placeholder="查询…" style="width:200px"><button class="btn">查询</button></form>
+  <a class="btn" href="{{ url_for('admin.r_list', res=res) }}">刷新</a>
+  {% if res == 'servers' %}
+    <a class="btn" href="{{ url_for('admin.import_all') }}">从 3X-UI 导入</a>
+    <a class="btn" href="{{ url_for('admin.server_join') }}">一键接入新服务器</a>
+  {% elif res == 'lines' %}
+    <a class="btn" href="{{ url_for('admin.quick_line') }}">一键建线路</a>
+  {% elif res == 'outbounds' or res == 'inbounds' %}
+    <a class="btn" href="{{ url_for('admin.quick_exit') }}">一键加落地</a>
+  {% elif res == 'clients' %}
+    <a class="btn" href="{{ url_for('admin.clients_export') }}">导出</a>
+  {% endif %}
+  <span class="sp"></span><span class="muted small">共 {{ rows|length }} 条</span>
+</div>
+<div class="tbl"><table>
+<thead><tr>{% for c, label in R.cols %}<th>{{ label }}</th>{% endfor %}<th style="width:1%">操作</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr>
+  {% for c, label in R.cols %}{% set v = cell(r, c) %}
+  <td>{% if loop.first %}
+    {% if res == 'servers' %}<a href="{{ url_for('admin.server_detail', sid=r.id) }}">{{ v }}</a>
+    {% elif res == 'clients' %}<a href="{{ url_for('admin.client_detail', cid=r.id) }}">{{ v }}</a>
+    {% else %}<a href="{{ url_for('admin.r_edit', res=res, oid=r.id) }}">{{ v }}</a>{% endif %}
+  {% elif c == 'status' %}<span class="tag {{ 'ok' if v=='在线' else 'err' if v=='离线' else '' }}">{{ v }}</span>
+  {% elif c == '_state' %}<span class="tag {{ 'ok' if v=='正常' else 'err' }}">{{ v }}</span>
+  {% elif c == 'mode' %}<span class="tag {{ 'c' if v=='已接管' else '' }}">{{ v }}</span>
+  {% elif c == 'type' %}{{ {'direct':'直出','exit':'落地中转','socks':'SOCKS','http':'HTTP','balancer':'负载均衡','chain':'链式','block':'阻断'}.get(v, v) }}
+  {% elif c == 'kind' %}{{ '落地' if v=='exit' else '入口' }}
+  {% else %}{{ v }}{% endif %}</td>
+  {% endfor %}
+  <td><a class="btn sm" href="{{ url_for('admin.r_edit', res=res, oid=r.id) }}">编辑</a>
+      <a class="btn sm d" href="{{ url_for('admin.r_delete', res=res, oid=r.id) }}">删除</a></td>
+</tr>{% else %}
+<tr><td colspan="{{ R.cols|length + 1 }}" class="muted" style="text-align:center;padding:30px">
+  还没有数据。{% if res == 'servers' %}可以先“新增”手动录入，或“一键接入新服务器”，再“从 3X-UI 导入”现有配置。{% endif %}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% endblock %}

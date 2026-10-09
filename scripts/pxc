@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# 节点控制台管理命令：直接输入 pxc 出现中文菜单；也可以带参数，如 pxc restart
+set -uo pipefail
+PXC_HOME=/opt/pxc
+ENV_FILE=/etc/pxc/pxc.env
+PY=$PXC_HOME/venv/bin/python
+[ -f "$ENV_FILE" ] || { echo "没有找到 $ENV_FILE，请先安装"; exit 1; }
+set -a; . "$ENV_FILE"; set +a
+cd "$PXC_HOME/current" 2>/dev/null || { echo "程序目录缺失，请重新安装"; exit 1; }
+
+green(){ printf '\033[32m%s\033[0m\n' "$*"; }
+red(){ printf '\033[31m%s\033[0m\n' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
+need_root(){ [ "$(id -u)" = 0 ] || { red "请用 root 执行"; exit 1; }; }
+services(){ if [ "$PXC_ROLE" = console ]; then echo "pxc-web pxc-worker"; else echo "pxc-web"; fi; }
+cli(){ "$PY" -m pxc.cli "$@"; }
+set_env(){ # set_env KEY VALUE
+  if grep -q "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+}
+ip_addr(){ curl -fsS4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}'; }
+
+do_start(){ systemctl start $(services) && green "已启动"; }
+do_stop(){ systemctl stop $(services) && green "已停止"; }
+do_restart(){ systemctl restart $(services) && green "已重启"; }
+do_status(){
+  for s in $(services); do printf '%-12s %s\n' "$s" "$(systemctl is-active $s)"; done
+  echo "版本 $(cat VERSION 2>/dev/null)，角色 $PXC_ROLE，端口 $PXC_PORT"
+  [ "$PXC_ROLE" = console ] && cli status
+}
+do_log(){ journalctl -u pxc-web $( [ "$PXC_ROLE" = console ] && echo "-u pxc-worker" ) -n 100 --no-pager; }
+do_url(){
+  if [ "$PXC_ROLE" = console ]; then
+    local proto=http; [ -n "${PXC_TLS_CERT:-}" ] && proto=https
+    echo "登录地址：$proto://$(ip_addr):$PXC_PORT/$PXC_LOGIN_PATH"
+  else echo "订阅服务端口：$PXC_PORT"; fi
+}
+do_port(){
+  local p="${1:-}"; [ -z "$p" ] && read -rp "新端口：" p
+  case "$p" in ''|*[!0-9]*) red "端口不对"; return 1;; 2096|2053|2083|2087) red "$p 是常用冲突端口，换一个"; return 1;; esac
+  set_env PXC_PORT "$p"; do_restart; do_url
+}
+do_path(){
+  local p="${1:-}"; [ -z "$p" ] && read -rp "新登录路径（字母数字）：" p
+  p="${p#/}"; [[ "$p" =~ ^[A-Za-z0-9_-]{4,40}$ ]] || { red "路径只能用 4–40 位字母数字"; return 1; }
+  set_env PXC_LOGIN_PATH "$p"; do_restart; do_url
+}
+do_reset_pw(){ need_root; cli reset-password "${1:-}" | sed 's/[{}"]//g'; yellow "请登录后到“安全与对接”改成自己的密码"; }
+do_reset_2fa(){ need_root; cli reset-2fa "${1:-}"; }
+do_clear_allow(){ need_root; cli set admin_ip_allowlist ""; green "已清空后台 IP 白名单"; }
+do_backup(){
+  local d=/var/lib/pxc/backups f; mkdir -p $d; f="$d/manual-$(date +%Y%m%d%H%M%S).tar.gz"
+  "$PY" -c 'import sqlite3,sys;a=sqlite3.connect(sys.argv[1]);b=sqlite3.connect(sys.argv[2]);a.backup(b);b.close()' \
+    /var/lib/pxc/pxc.db /var/lib/pxc/backup.tmp.db
+  tar -czf "$f" -C /var/lib/pxc backup.tmp.db secret.key session.key brand 2>/dev/null; rm -f /var/lib/pxc/backup.tmp.db
+  chmod 600 "$f"; green "已备份到 $f（含加密密钥，请妥善保管）"
+}
+do_restore(){
+  need_root; local f="${1:-}"; [ -z "$f" ] && { ls -1t /var/lib/pxc/backups/ | head; read -rp "要恢复的文件（完整路径）：" f; }
+  [ -f "$f" ] || { red "文件不存在"; return 1; }
+  read -rp "恢复会覆盖当前数据，确定？[y/N] " a; [ "$a" = y ] || return 0
+  do_stop; local t; t=$(mktemp -d)
+  case "$f" in
+    *.tar.gz) tar -xzf "$f" -C "$t"; cp "$t/backup.tmp.db" /var/lib/pxc/pxc.db
+              for k in secret.key session.key; do [ -f "$t/$k" ] && cp "$t/$k" /var/lib/pxc/; done
+              [ -d "$t/brand" ] && cp -a "$t/brand" /var/lib/pxc/ ;;
+    *.db) cp "$f" /var/lib/pxc/pxc.db ;;
+  esac
+  rm -rf "$t"; rm -f /var/lib/pxc/pxc.db-wal /var/lib/pxc/pxc.db-shm; do_start
+}
+do_update(){
+  need_root
+  local repo="${PXC_REPO:-}"
+  yellow "从 GitHub Release 升级（$repo），升级前会自动备份数据库"
+  curl -fsSL "https://github.com/$repo/releases/latest/download/install.sh" -o /tmp/pxc-install.sh || { red "下载失败"; return 1; }
+  PXC_REPO="$repo" bash /tmp/pxc-install.sh
+}
+do_rollback(){
+  need_root
+  [ -L $PXC_HOME/previous ] || { red "没有上一版本"; return 1; }
+  local prev; prev=$(readlink $PXC_HOME/previous)
+  read -rp "回退到 $(basename "$prev")？（数据库会恢复到升级前的备份）[y/N] " a; [ "$a" = y ] || return 0
+  do_stop
+  local bk; bk=$(ls -1t /var/lib/pxc/backups/before-*.db 2>/dev/null | head -1)
+  [ -n "$bk" ] && cp "$bk" /var/lib/pxc/pxc.db && rm -f /var/lib/pxc/pxc.db-wal /var/lib/pxc/pxc.db-shm
+  ln -sfn "$(readlink $PXC_HOME/current)" $PXC_HOME/previous.tmp
+  ln -sfn "$prev" $PXC_HOME/current; mv -T $PXC_HOME/previous.tmp $PXC_HOME/previous
+  do_start; green "已回退到 $(cat $PXC_HOME/current/VERSION)"
+}
+do_cert(){
+  need_root
+  local domain="${1:-}" token="${2:-}"
+  [ -z "$domain" ] && read -rp "域名：" domain
+  [ -z "$token" ] && read -rp "Cloudflare API 令牌（Zone:Read + DNS:Edit）：" token
+  [ -d ~/.acme.sh ] || curl -fsSL https://get.acme.sh | sh -s email="admin@$domain" >/dev/null
+  CF_Token="$token" ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$domain" --server letsencrypt --keylength ec-256 || true
+  mkdir -p /etc/pxc/cert
+  ~/.acme.sh/acme.sh --install-cert -d "$domain" --ecc --fullchain-file /etc/pxc/cert/fullchain.pem \
+    --key-file /etc/pxc/cert/privkey.pem --reloadcmd "systemctl restart pxc-web" || { red "证书申请失败"; return 1; }
+  set_env PXC_TLS_CERT /etc/pxc/cert/fullchain.pem; set_env PXC_TLS_KEY /etc/pxc/cert/privkey.pem
+  sed -i "s|-b 0.0.0.0:\${PXC_PORT} .*--access|-b 0.0.0.0:\${PXC_PORT} --certfile /etc/pxc/cert/fullchain.pem --keyfile /etc/pxc/cert/privkey.pem --access|" /etc/systemd/system/pxc-web.service
+  systemctl daemon-reload; do_restart; green "证书已启用，到期前会自动续期"
+}
+do_cf_firewall(){
+  need_root
+  local v4 v6
+  v4=$(curl -fsS https://www.cloudflare.com/ips-v4) || { red "取 Cloudflare IP 段失败"; return 1; }
+  v6=$(curl -fsS https://www.cloudflare.com/ips-v6 || true)
+  iptables -N PXC_CF 2>/dev/null || iptables -F PXC_CF
+  for n in $v4; do iptables -A PXC_CF -s "$n" -j ACCEPT; done
+  iptables -A PXC_CF -s 127.0.0.0/8 -j ACCEPT
+  iptables -A PXC_CF -j DROP
+  iptables -C INPUT -p tcp --dport "$PXC_PORT" -j PXC_CF 2>/dev/null || iptables -I INPUT -p tcp --dport "$PXC_PORT" -j PXC_CF
+  if command -v ip6tables >/dev/null; then
+    ip6tables -N PXC_CF 2>/dev/null || ip6tables -F PXC_CF
+    for n in $v6; do ip6tables -A PXC_CF -s "$n" -j ACCEPT; done
+    ip6tables -A PXC_CF -j DROP
+    ip6tables -C INPUT -p tcp --dport "$PXC_PORT" -j PXC_CF 2>/dev/null || ip6tables -I INPUT -p tcp --dport "$PXC_PORT" -j PXC_CF
+  fi
+  # 开机自动恢复
+  cat > /etc/systemd/system/pxc-cf-firewall.service <<EOF
+[Unit]
+Description=PXC allow only Cloudflare to subscription port
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pxc cf-firewall
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload; systemctl enable -q pxc-cf-firewall 2>/dev/null
+  green "订阅端口 $PXC_PORT 只允许 Cloudflare 访问"
+}
+do_uninstall(){
+  need_root
+  read -rp "卸载会删除程序和服务（数据目录 /var/lib/pxc 保留），确定？[y/N] " a; [ "$a" = y ] || return 0
+  systemctl disable --now pxc-web pxc-worker pxc-cf-firewall 2>/dev/null
+  rm -f /etc/systemd/system/pxc-*.service; systemctl daemon-reload
+  rm -rf $PXC_HOME /usr/local/bin/pxc
+  green "已卸载。数据还在 /var/lib/pxc 和 /etc/pxc，确认不要了可手动删除。"
+}
+
+menu(){
+  echo
+  green "  节点控制台 $(cat VERSION 2>/dev/null)  ·  角色：$( [ "$PXC_ROLE" = console ] && echo 控制台 || echo 订阅服务 )"
+  echo "  ───────────────────────────"
+  echo "   1. 启动          2. 停止          3. 重启"
+  echo "   4. 查看状态      5. 查看日志"
+  echo "   6. 显示登录地址  7. 修改端口      8. 修改登录路径"
+  echo "   9. 重置管理员密码               10. 重置二次认证（手机丢失）"
+  echo "  11. 清空后台 IP 白名单（被关在外面时）"
+  echo "  12. 申请 / 续期证书"
+  echo "  13. 升级          14. 回退上一版本"
+  echo "  15. 备份          16. 恢复"
+  echo "  17. 卸载           0. 退出"
+  echo "  ───────────────────────────"
+  read -rp "  请选择：" n
+  case "$n" in
+    1) do_start;; 2) do_stop;; 3) do_restart;; 4) do_status;; 5) do_log;; 6) do_url;; 7) do_port;; 8) do_path;;
+    9) do_reset_pw;; 10) do_reset_2fa;; 11) do_clear_allow;; 12) do_cert;; 13) do_update;; 14) do_rollback;;
+    15) do_backup;; 16) do_restore;; 17) do_uninstall;; 0|"") exit 0;; *) red "没有这个选项";;
+  esac
+}
+
+case "${1:-}" in
+  "") menu;;
+  start) do_start;; stop) do_stop;; restart) do_restart;; status) do_status;; log|logs) do_log;;
+  url) do_url;; port) do_port "${2:-}";; path) do_path "${2:-}";;
+  reset-password) do_reset_pw "${2:-}";; reset-2fa) do_reset_2fa "${2:-}";; clear-allowlist) do_clear_allow;;
+  cert) do_cert "${2:-}" "${3:-}";; update|upgrade) do_update;; rollback) do_rollback;;
+  backup) do_backup;; restore) do_restore "${2:-}";; uninstall) do_uninstall;; cf-firewall) do_cf_firewall;;
+  legacy-path) need_root; set_env PXC_LEGACY_SUB_PATHS "${2:?例：pxc legacy-path /sub/,/json/}"; do_restart;;
+  set) need_root; cli set "${2:?缺少设置名}" "${3:-}";;
+  get) cli get "${2:?缺少设置名}";;
+  version) cat VERSION;;
+  *) echo "用法：pxc [start|stop|restart|status|log|url|port N|path X|reset-password|reset-2fa|clear-allowlist|cert 域名 令牌|update|rollback|backup|restore 文件|cf-firewall|uninstall|version]";;
+esac

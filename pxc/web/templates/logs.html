@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block h1 %}{{ srv.name }} · 最近 50 行日志{% endblock %}{% block body %}
+<div class="toolbar"><a class="btn" href="{{ url_for('admin.server_detail', sid=srv.id) }}">返回</a><a class="btn" href="">刷新</a></div>
+<pre>{% for l in lines %}{{ l }}
+{% endfor %}</pre>{% endblock %}

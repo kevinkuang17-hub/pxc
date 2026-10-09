@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block h1 %}从 3X-UI 导入{% endblock %}{% block body %}
+<form method="post" class="card">
+  <p>从各服务器<b>实际运行的配置</b>读取入站、落地、用户（保留 UUID、subId、Vision、流量上限、到期日）和“入站 → 落地”的路由关系。只读，不会改服务器上的任何东西。</p>
+  <p class="muted small">建议一次勾选全部服务器（落地在别的服务器上时才能对上）。已导入过的入站不会重复导入。导入后每个用户按“额外加的线路”记录现状，再到“套餐”里归纳。</p>
+  {% for s in servers %}<label style="display:block;margin:4px 0"><input type="checkbox" name="sid" value="{{ s.id }}" checked> {{ s.name }} <span class="muted small">{{ s.panel_url }}</span></label>
+  {% else %}<p class="muted">先在“服务器”里录入面板地址和账号。</p>{% endfor %}
+  {% if servers %}<p><button class="btn p">开始导入</button></p>{% endif %}
+</form>{% endblock %}

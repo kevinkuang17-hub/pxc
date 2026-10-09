@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ site_name }}</title><meta name="robots" content="noindex,nofollow">
+{% if brand.favicon %}<link rel="icon" href="{{ url_for('admin.static_brand', name=brand.favicon) }}">{% endif %}
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ version }}">
+<style>:root{--c:{{ theme }}}</style></head>
+<body><div class="auth" {% if brand.login_bg %}style="background-image:linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.35)),url('{{ url_for('admin.static_brand', name=brand.login_bg) }}')"{% endif %}>
+<div class="box">
+  {% if brand.login_logo %}<div style="text-align:center"><img src="{{ url_for('admin.static_brand', name=brand.login_logo) }}" style="max-height:48px"></div>{% endif %}
+  <h1>{{ site_name }}</h1>
+  {% block box %}{% endblock %}
+  {% if footer %}<div class="muted small" style="text-align:center;margin-top:14px">{{ footer }}</div>{% endif %}
+</div></div></body></html>

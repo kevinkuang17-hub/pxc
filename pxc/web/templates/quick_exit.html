@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block h1 %}一键加落地{% endblock %}{% block body %}
+<form method="post" class="f card">
+  <div class="row"><label class="l">落地服务器 *</label><div><select name="server_id">{% for s in servers %}<option value="{{ s.id }}">{{ s.name }} {{ s.region }}</option>{% endfor %}</select></div></div>
+  <div class="row"><label class="l">加密方式</label><div><select name="method"><option>2022-blake3-aes-128-gcm</option><option>2022-blake3-aes-256-gcm</option><option>2022-blake3-chacha20-poly1305</option></select><div class="help">密钥自动生成，长度自动匹配，不会再出现填错导致 Xray 起不来</div></div></div>
+  <div class="row"><label class="l">端口</label><div><input type="number" name="port" placeholder="留空随机"></div></div>
+  <div class="row"><label class="l">让这些线路走这个落地</label><div><select name="lines" multiple>{% for l in lines %}<option value="{{ l.id }}">{{ l.name }}（{{ l.entry.server.name }}）</option>{% endfor %}</select><div class="help">入口服务器上的出站和路由规则会自动生成</div></div></div>
+  <div class="row"><span></span><div><button class="btn p">创建</button></div></div>
+</form>{% endblock %}

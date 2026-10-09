@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block h1 %}一键接入新服务器{% endblock %}{% block body %}
+{% if cmd %}
+<div class="card"><h2>在新 VPS 上用 root 粘贴执行这一行</h2>
+  <div class="cmd"><pre id="cmd">{{ cmd }}</pre><button class="btn" onclick="copyText('cmd',this)">复制</button></div>
+  <p class="muted small">24 小时内有效、只能用一次。脚本会：安装 3X-UI 单机版 → 设置随机面板端口/路径/账号（避开 2096）→ 防火墙只放行 443 和控制台 → （可选）加入 Tailscale、用 Cloudflare 申请证书 → 注册到控制台。完成后服务器会出现在列表里（直接是“控制台接管”模式）。</p>
+  <a class="btn" href="{{ url_for('admin.r_list', res='servers') }}">返回服务器列表</a></div>
+{% else %}
+<form method="post" class="f card">
+  <div class="row"><label class="l">服务器名称 *</label><div><input type="text" name="name" placeholder="HK E" required></div></div>
+  <div class="row"><label class="l">地区代码</label><div><input type="text" name="region" placeholder="HK"></div></div>
+  <div class="row"><label class="l">节点域名</label><div><input type="text" name="domain" placeholder="hke.example.com"><div class="help">先在 Cloudflare 把它解析到新服务器 IP（灰云）。填了 Cloudflare 令牌会自动申请证书。</div></div></div>
+  <div class="row"><label class="l">控制台地址 *</label><div><input type="text" name="console_url" value="{{ console }}" placeholder="http://100.64.0.2:54321"><div class="help">新服务器能访问到的控制台地址，建议用 Tailscale 内网地址（控制台不上公网）</div></div></div>
+  <div class="row"><label class="l">Tailscale 授权密钥</label><div><input type="text" name="ts_key" placeholder="tskey-auth-…（可选）"><div class="help">填了会让新服务器加入 Tailscale，控制台经内网管理面板</div></div></div>
+  <div class="row"><label class="l">Cloudflare API 令牌</label><div><input type="text" name="cf_token" placeholder="可选，只需 Zone:Read + DNS:Edit"></div></div>
+  <div class="row"><span></span><div><button class="btn p">生成安装命令</button></div></div>
+</form>
+{% endif %}{% endblock %}

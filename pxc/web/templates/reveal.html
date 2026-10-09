@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block h1 %}{{ inb.tag }} · 密钥{% endblock %}{% block body %}
+<div class="card">{% if priv %}<p>Reality 私钥</p><pre>{{ priv }}</pre><p>公钥</p><pre>{{ inb.reality_public }}</pre><p>Short ID</p><pre>{{ inb.reality_short_id }}</pre>{% endif %}
+{% if ss %}<p>SS 2022 密钥（{{ inb.ss_method }}）</p><pre>{{ ss }}</pre>{% endif %}
+{% if not priv and not ss %}<p class="muted">这个入站没有密钥。</p>{% endif %}
+<a class="btn" href="{{ url_for('admin.r_edit', res='inbounds', oid=inb.id) }}">返回</a></div>{% endblock %}

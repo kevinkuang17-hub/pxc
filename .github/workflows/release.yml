@@ -1,0 +1,89 @@
+# 合并到 main → 跑测试 → 自动算版本号 → 生成更新日志 → 打标签 → 打包 → 发布为“测试版”(prerelease)
+# 测试服务器验证没问题后，在 Actions 里手动运行 “promote” 把它标记为稳定版（安装命令和 pxc update 只取稳定版）
+#
+# 源码放私有仓库时：在仓库 Settings → Variables 设 RELEASE_REPO=你的账号/pxc-release（公开、只放安装包），
+# Settings → Secrets 设 RELEASE_TOKEN（对 RELEASE_REPO 有 contents:write 的 fine-grained token）。
+# 不设则发布到本仓库。
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: "把最新测试版标记为稳定版（填 yes）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests
+
+  release:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+      REPO: ${{ vars.RELEASE_REPO || github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: 计算版本号
+        id: ver
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "")
+          base=${last:-$(cat VERSION)}
+          base=${base#v}; IFS=. read -r MA MI PA <<< "$base"
+          range=${last:+$last..}HEAD
+          log=$(git log --format='%s%n%b' $range)
+          if [ -z "$last" ]; then next="$MA.$MI.$PA"
+          elif echo "$log" | grep -qE '(BREAKING|^[a-z]+(\(.+\))?!:)'; then next="$((MA+1)).0.0"
+          elif echo "$log" | grep -qE '^feat'; then next="$MA.$((MI+1)).0"
+          else next="$MA.$MI.$((PA+1))"; fi
+          echo "v=v$next" >> "$GITHUB_OUTPUT"
+          { echo "## v$next"; echo; git log --format='- %s (%h)' $range | grep -vE '^- (chore|ci)' | head -100; } > NOTES.md
+      - name: 打包
+        run: |
+          V=${{ steps.ver.outputs.v }}
+          echo "$V" > VERSION
+          echo "$(date -u +%Y-%m-%dT%H:%MZ)" > pxc/BUILD
+          cp VERSION pxc/VERSION
+          mkdir -p dist/pxc-release
+          cp -a pxc scripts requirements.txt VERSION dist/pxc-release/
+          find dist -name '__pycache__' -prune -exec rm -rf {} +
+          sed -i "s#YOUR_GITHUB/pxc-release#$REPO#" dist/pxc-release/scripts/install.sh
+          tar -C dist -czf dist/pxc-release.tar.gz pxc-release
+          (cd dist && sha256sum pxc-release.tar.gz > pxc-release.tar.gz.sha256)
+          cp dist/pxc-release/scripts/install.sh dist/install.sh
+      - name: 打标签并发布测试版
+        run: |
+          V=${{ steps.ver.outputs.v }}
+          git tag "$V" && git push origin "$V" || true
+          gh release create "$V" -R "$REPO" --prerelease --title "$V" --notes-file NOTES.md \
+            dist/pxc-release.tar.gz dist/pxc-release.tar.gz.sha256 dist/install.sh
+
+  promote:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.promote == 'yes'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+      REPO: ${{ vars.RELEASE_REPO || github.repository }}
+    steps:
+      - name: 最新测试版 → 稳定版
+        run: |
+          V=$(gh release list -R "$REPO" --limit 20 --json tagName,isPrerelease -q '[.[]|select(.isPrerelease)][0].tagName')
+          [ -n "$V" ] || { echo "没有测试版"; exit 1; }
+          gh release edit "$V" -R "$REPO" --prerelease=false --latest
+          echo "已把 $V 标记为稳定版"

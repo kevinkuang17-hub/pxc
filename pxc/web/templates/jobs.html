@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block h1 %}推送任务{% endblock %}{% block body %}
+<div class="toolbar"><a class="btn" href="{{ url_for('admin.jobs') }}">刷新</a><span class="sp"></span><span class="muted small">失败按 10 秒 / 1 分钟 / 5 分钟重试，3 次仍失败会告警</span></div>
+<div class="tbl"><table><thead><tr><th>#</th><th>时间</th><th>服务器</th><th>状态</th><th>次数</th><th>原因</th><th>结果 / 错误</th><th></th></tr></thead><tbody>
+{% for j in rows %}<tr><td>{{ j.id }}</td><td>{{ fmt_dt(j.created_at) }}</td><td>{{ sname.get(j.server_id) }}</td>
+<td><span class="tag {{ 'ok' if j.status=='done' else 'err' if j.status=='dead' else 'warn' }}">{{ {'done':'完成','dead':'失败','pending':'排队','running':'执行中'}.get(j.status, j.status) }}</span></td>
+<td>{{ j.attempts }}</td><td class="wrap">{{ j.reason[:120] }}</td><td class="wrap small">{{ (j.error or j.result)[:300] }}</td>
+<td>{% if j.status=='dead' %}<form method="post" action="{{ url_for('admin.job_retry', jid=j.id) }}"><button class="btn sm">重试</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="8" class="muted">暂无</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

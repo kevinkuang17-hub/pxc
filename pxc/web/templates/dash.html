@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% block h1 %}概览{% endblock %}{% block body %}
+{% if newer %}<div class="card" style="border-color:var(--c)"><h2>有新版本 {{ newer }}</h2>
+<p>在控制台服务器上执行 <code>pxc update</code> 即可升级（升级前自动备份，出问题 <code>pxc rollback</code>）。</p>
+{% if notes %}<details><summary class="muted">更新日志</summary><pre>{{ notes }}</pre></details>{% endif %}</div>{% endif %}
+<div class="grid" style="margin-bottom:16px">
+  <div class="stat"><div class="k">服务器在线</div><div class="v">{{ servers|selectattr('status','equalto','online')|list|length }} / {{ servers|length }}</div></div>
+  <div class="stat"><div class="k">用户（正常 / 全部）</div><div class="v">{{ n_active }} / {{ n_clients }}</div></div>
+  <div class="stat"><div class="k">今日流量</div><div class="v">{{ hb(today) }}</div></div>
+  <div class="stat"><div class="k">需要处理</div><div class="v" style="color:{{ 'var(--err)' if problems else 'var(--ok)' }}">{{ problems|length }}</div></div>
+</div>
+{% if problems %}<div class="card"><h2>需要处理</h2><ul class="notes">
+{% for s in problems %}<li><a href="{{ url_for('admin.server_detail', sid=s.id) }}">{{ s.name }}</a>：
+  {% if s.status == 'offline' %}连不上面板（{{ s.last_error[:80] }}）{% elif s.last_sync_result == 'failed' %}上次推送失败（{{ s.last_error[:80] }}）{% else %}与应有状态有 {{ s.last_diff_count }} 项差异{% if s.mode=='observe' %}（只读观察中，未下发）{% endif %}{% endif %}</li>{% endfor %}
+</ul></div>{% endif %}
+<div class="card"><h2>服务器</h2><div class="tbl"><table>
+<thead><tr><th>名称</th><th>状态</th><th>模式</th><th>Xray</th><th>CPU / 内存</th><th>在线</th><th>差异</th><th>上次推送</th></tr></thead><tbody>
+{% for s in servers %}<tr>
+<td><a href="{{ url_for('admin.server_detail', sid=s.id) }}">{{ s.name }}</a> <span class="muted small">{{ s.region }}</span>{% if s.maintenance %} <span class="tag warn">维护中</span>{% endif %}</td>
+<td><span class="tag {{ 'ok' if s.status=='online' else 'err' if s.status=='offline' else '' }}">{{ {'online':'在线','offline':'离线'}.get(s.status,'未知') }}</span></td>
+<td><span class="tag {{ 'c' if s.mode=='managed' }}">{{ '已接管' if s.mode=='managed' else '只读观察' }}</span></td>
+<td>{{ s.xray_state or '—' }} <span class="muted small">{{ s.xray_version }}</span></td>
+<td>{{ '%.0f'|format(s.cpu or 0) }}% / {{ '%.0f'|format(s.mem or 0) }}%</td>
+<td>{{ s.online_users or 0 }}</td>
+<td>{% if s.last_diff_count %}<span class="tag warn">{{ s.last_diff_count }}</span>{% else %}0{% endif %}</td>
+<td>{{ fmt_dt(s.last_sync_at) }} {% if s.last_sync_result=='failed' %}<span class="tag err">失败</span>{% elif s.last_sync_result=='ok' %}<span class="tag ok">成功</span>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">还没有服务器。到“服务器”页新增或一键接入。</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><h2>最近推送</h2><div class="tbl"><table><thead><tr><th>时间</th><th>服务器</th><th>状态</th><th>原因</th></tr></thead><tbody>
+{% for j in jobs %}<tr><td>{{ fmt_dt(j.created_at) }}</td><td>{{ sname.get(j.server_id) }}</td>
+<td><span class="tag {{ 'ok' if j.status=='done' else 'err' if j.status=='dead' else 'warn' }}">{{ {'done':'完成','dead':'失败','pending':'排队','running':'执行中'}.get(j.status, j.status) }}</span></td>
+<td class="wrap">{{ j.reason[:100] }}</td></tr>{% else %}<tr><td colspan="4" class="muted">暂无</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% if stale %}<div class="card"><h2>超过 3 天没刷新订阅的用户</h2><p class="muted small">线路有变化时，这些用户可能连不上，建议提醒他们刷新。</p>
+{% for c in stale %}<a class="tag" href="{{ url_for('admin.client_detail', cid=c.id) }}">{{ c.name }} · {{ fmt_dt(c.last_sub_at) }}</a> {% endfor %}</div>{% endif %}
+{% endblock %}

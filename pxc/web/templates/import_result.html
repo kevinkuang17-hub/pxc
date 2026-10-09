@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block h1 %}导入结果{% endblock %}{% block body %}
+<div class="grid" style="margin-bottom:16px">
+  <div class="stat"><div class="k">入站</div><div class="v">{{ rep.inbounds }}</div></div>
+  <div class="stat"><div class="k">其中落地</div><div class="v">{{ rep.exits }}</div></div>
+  <div class="stat"><div class="k">新用户 / 关联</div><div class="v">{{ rep.clients_new }} / {{ rep.clients_linked }}</div></div>
+  <div class="stat"><div class="k">出站 / 已接落地的线路</div><div class="v">{{ rep.outbounds }} / {{ rep.lines_routed }}</div></div>
+</div>
+{% if rep.errors %}<div class="card" style="border-color:var(--err)"><h2 style="color:var(--err)">失败</h2><ul class="notes">{% for e in rep.errors %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+{% if rep.warnings %}<div class="card"><h2>需要留意</h2><ul class="notes">{% for e in rep.warnings %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="card"><h2>下一步</h2><ol>
+<li>到“线路组”建香港 / 日本 / 新加坡 / 美国等组，把线路放进去；</li>
+<li>到“套餐”按现在的分配归纳 2–4 个套餐，给用户选套餐（对不上的保留“额外加的线路”）；</li>
+<li>服务器保持“只读观察”，每 5 分钟自动比对，连续 7 天差异为 0 再切换为“控制台接管”（先接 HK D 试点）。</li></ol>
+<a class="btn p" href="{{ url_for('admin.dash') }}">回概览</a></div>{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% block h1 %}用户 · {{ c.name }}{% endblock %}{% block body %}
+<div class="toolbar">
+  <a class="btn" href="{{ url_for('admin.r_edit', res='clients', oid=c.id) }}">编辑</a>
+  <form method="post" action="{{ url_for('admin.client_action', cid=c.id) }}" style="display:flex;gap:6px"><input type="hidden" name="act" value="renew"><input type="number" name="days" placeholder="{{ c.plan.duration_days if c.plan else 30 }} 天" style="width:100px"><button class="btn p">续期</button></form>
+  <form method="post" action="{{ url_for('admin.client_action', cid=c.id) }}" data-confirm="确定把本周期流量清零？"><input type="hidden" name="act" value="reset_traffic"><button class="btn">重置流量</button></form>
+  <form method="post" action="{{ url_for('admin.client_action', cid=c.id) }}" data-confirm="重置后旧订阅地址立即失效，用户需要重新导入。确定？"><input type="hidden" name="act" value="reset_sub"><button class="btn">重置订阅地址</button></form>
+  <form method="post" action="{{ url_for('admin.client_action', cid=c.id) }}" data-confirm="重置 UUID 后所有服务器同步更新，用户必须刷新订阅。确定？"><input type="hidden" name="act" value="reset_uuid"><button class="btn d">重置 UUID</button></form>
+</div>
+{% set reason = c.active_reason() %}
+<div class="grid" style="margin-bottom:16px">
+  <div class="stat"><div class="k">状态</div><div class="v" style="color:{{ 'var(--ok)' if not reason else 'var(--err)' }}">{{ {'quota':'流量用完','expired':'已到期','manual':'停用'}.get(reason, '正常') if reason else '正常' }}</div></div>
+  <div class="stat"><div class="k">已用 / 上限（跨服务器合计）</div><div class="v" style="font-size:16px">{{ hb(c.used_bytes) }} / {{ hb(c.limit_bytes) if c.limit_bytes else '不限' }}</div></div>
+  <div class="stat"><div class="k">到期</div><div class="v" style="font-size:16px">{{ c.expire_at.strftime('%Y-%m-%d') if c.expire_at else '不过期' }}</div></div>
+  <div class="stat"><div class="k">最近拉取订阅</div><div class="v" style="font-size:14px">{{ fmt_dt(c.last_sub_at) }}<div class="muted small">{{ c.last_sub_ua[:40] }}</div></div></div>
+</div>
+<div class="card"><h2>订阅</h2>
+  <div class="cmd"><pre id="suburl">{{ url }}</pre><button class="btn" onclick="copyText('suburl',this)">复制</button></div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:12px">
+    <div class="qr">{{ qr|safe }}</div>
+    <div><p class="muted small">一键导入（发给用户；在浏览器里打开订阅地址也会看到引导页）</p>
+      {% for name, link, plat in links %}<div style="margin:4px 0"><a href="{{ link }}">{{ name }}</a> <span class="muted small">{{ plat }}</span></div>{% endfor %}
+      <p class="muted small" style="margin-top:10px">指定格式：<code>?target=clash</code> / <code>singbox</code> / <code>v2ray</code> / <code>shadowrocket</code>；OpenClash 只要节点：<code>?target=clash&amp;nodes=1</code></p>
+      {% if c.legacy_sub_id %}<p class="muted small">旧 3X-UI 订阅路径（subId {{ c.legacy_sub_id }}）继续可用。</p>{% endif %}
+    </div></div></div>
+<div class="card"><h2>可用线路（{{ lines|length }}）</h2>
+{% for l in lines %}<span class="tag">{{ l.name }}</span> {% else %}<span class="muted">没有线路：请给他选套餐，或在编辑里“额外加的线路”。</span>{% endfor %}</div>
+<div class="card"><h2>近 30 天流量</h2><div class="tbl"><table><thead><tr><th>日期</th><th>流量</th></tr></thead><tbody>
+{% for d, b in by_day %}<tr><td>{{ d }}</td><td>{{ hb(b) }}</td></tr>{% else %}<tr><td colspan="2" class="muted">暂无</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

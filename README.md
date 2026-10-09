@@ -1,0 +1,100 @@
+# 节点控制台（PXC）
+
+用一个控制台替换 3X-UI 主控：用户、套餐、线路只在控制台维护，**单向**推送到各台单机版 3X-UI；多台服务器在订阅和流量上合并成一套服务。按《节点控制台 PRD》实现，本版覆盖 PRD 建议先做的 **M1 + M2**，加上独立订阅服务、CRM 对接和一键部署。
+
+## 本版包含
+
+| PRD | 内容 |
+| --- | --- |
+| F1 服务器管理 | 增删改、保存前测连通性、在线/Xray/CPU/内存/在线人数、维护中、重启 Xray、看错误日志、立即比对/推送 |
+| F2 入站与落地 | VLESS Reality / TCP+TLS(+回落) / XHTTP+TLS(CDN)、Trojan、VMess、SS 2022 落地；端口冲突、面板端口、证书、Reality 参数、SS 密钥长度校验；密钥自动生成、一键重新生成；稳定标签；“高级 JSON” |
+| F3 / F3b 线路与出站 | 线路 = 入口 +（可选）出站；线路组（url-test / fallback / select）；出站：直出、落地中转、SOCKS/HTTP、负载均衡（含延迟测速）、链式多跳、阻断；路由规则：阻断 / 域名 / geosite / IP / 按用户 / 按线路，自动生成到入口服务器；被引用的出站不能删 |
+| F4 用户与套餐 | 用户绑定套餐自动获得线路组，单用户 include / exclude；续期、重置流量、重置订阅、重置 UUID；导出 |
+| F5 订阅 | v2ray（Happ / v2rayN / v2rayNG）、Clash Meta（Clash Verge / OpenClash，含“只出节点”）、sing-box、Shadowrocket（自动去掉 Reality）；按出口地区命名 `🇸🇬 SG A`；`subscription-userinfo` / `profile-update-interval`；浏览器打开是引导页（二维码、一键导入）；兼容旧 3X-UI `/sub/<subId>` |
+| F6 流量与配额 | 每分钟采集、跨服务器合计、超额/到期自动在所有服务器移除、续费后自动加回、按月重置、80% 提醒 |
+| F7 推送与校验 | 应有状态 → 校验 → 只下发差异 → 先出站路由、再入站、最后用户 → 重启后确认 Xray 在运行，起不来自动回滚 → 再读一次确认一致；10 秒 / 1 分钟 / 5 分钟退避重试、合并批量改动、每台服务器加锁；每 5 分钟全量比对（多删少补）；**只读观察模式**（迁移第 4 步） |
+| 迁移 | 从现网 3X-UI 一键导入入站、落地、用户（UUID / subId / Vision / 上限 / 到期）和“入站→落地”路由，导入后只读比对差异为 0 |
+| F10 CRM 对接 | REST 接口、Webhook（带签名、重试）、60 秒一次性免登，见 [docs/API.md](docs/API.md) |
+| F11 一键配置 | 一键接入新服务器（单行命令：装 3X-UI、随机面板端口/路径/账号、面板只对控制台开放、可选 Tailscale、可选 Cloudflare DNS 证书、BBR、自动注册）；一键建线路；一键加落地；一键客户端导入链接 |
+| F14 登录安全 | 随机登录路径、未登录一律 404；强制 TOTP + 10 个备用码；30 天可信设备；5 次错误锁 15 分钟；IP 白名单；会话管理/强制下线；8 小时无操作退出；敏感操作再验证；新 IP 登录告警；外观（名称、Logo、图标、登录背景、主题色、页脚） |
+| 部署 | 一条命令安装控制台 / 订阅服务；`pxc` 中文管理菜单；升级前自动备份、可回退；每天自动备份数据库；GitHub Actions 自动算版本号、出测试版、手动转稳定版 |
+
+**下一版（PRD 的 M3 余项 / M5）**：sing-box agent 与 Hysteria2/TUIC、Cloudflare 解析与证书自动化（F16）、探针与智能管控（F12）、报表图表（F13）、规则方案与个性化分流（F15）、Surge / QX / Loon 订阅、多管理员角色、Passkey。
+
+---
+
+## 一、安装控制台
+
+装在一台**不对用户公开**的服务器上（PRD 待定问题 1：可以和现在的 3X-UI 主控同机，端口不冲突即可）。
+
+**方式 A：直接用安装包（最快）**
+
+把 `pxc-v0.1.0.tar.gz` 传到服务器 `/root/`（WinSCP、或你平时 `scp` 的方式），然后 SSH 登录服务器，用 root 粘贴这一行：
+
+```
+cd /root && tar xzf pxc-v0.1.0.tar.gz && bash pxc-release/scripts/install.sh
+```
+
+**方式 B：GitHub 自动发布（以后升级只需 `pxc update`）**
+
+1. 在 GitHub 建一个**私有**仓库放源码（如 `pxc`），再建一个**公开**仓库只放安装包（如 `pxc-release`）。
+2. 把本项目推到私有仓库。仓库 Settings → Variables 加 `RELEASE_REPO = 你的账号/pxc-release`；Settings → Secrets 加 `RELEASE_TOKEN`（对 pxc-release 有 Contents 读写权限的 fine-grained token）。
+3. 每次推送到 main：自动跑测试 → 算版本号（`fix:` 加修订号、`feat:` 加次版本、`!:`/`BREAKING` 加主版本）→ 发布为“测试版”。在测试服务器验证后，到 Actions 手动运行 release，`promote` 填 `yes` 转成稳定版。
+4. 服务器安装：
+
+```
+bash <(curl -fsSL https://github.com/你的账号/pxc-release/releases/latest/download/install.sh)
+```
+
+安装完会打印 **登录地址、账号、随机密码**。第一次登录必须用手机验证器（Google Authenticator / Microsoft Authenticator / 1Password）绑定，并保存 10 个备用码。
+
+> 控制台不要直接暴露公网：建议服务器装 Tailscale，只用内网地址访问，并在「外观与通知 → 后台 IP 白名单」填 `100.64.0.0/10`。把自己关在外面时，在服务器上执行 `pxc clear-allowlist`。
+
+## 二、接管现有服务器（按 PRD 迁移步骤）
+
+1. **每台节点**：确认 3X-UI 是单机模式、面板端口不是 2096、面板防火墙放行控制台 IP。
+2. 控制台「服务器 → 新增」：填名称、地区（HK/SG…）、节点域名、面板地址（**含端口和路径**，如 `http://100.64.0.5:23456/abc`）、面板账号密码。保存时会自动测连接。先保持“只读观察”。
+3. 「服务器 → 从 3X-UI 导入」：**勾选全部服务器一起导入**（落地在别的服务器上，一起导才能对上）。用户和线路关系以服务器上实际运行的为准（HK A 443 实际 29 人就导 29 人）。
+4. 「线路组」建 香港 / 日本 / 新加坡 / 美国 …，把线路放进去；「套餐」按现在的分配归纳 2–4 个，给用户选套餐；对不上的保留“额外加的线路”。
+5. **只读观察 7 天**：每 5 分钟自动比对，概览页“需要处理”为 0、服务器详情“差异 0”。
+6. **试点 HK D**：在 3X-UI 主控里**停用**（不要删除）HKD 节点 → 控制台里 HK D「切换为控制台接管」。试：加减用户、改套餐、在服务器面板上故意删一个用户（5 分钟内会被补回）、把落地密钥故意改错（会被校验拦住）。
+7. 切订阅（见第三节），再每天最多 2 台逐台接管：先落地（JP A、KR A、US C LD、SG），再入口，HK A 最后。
+8. 全部稳定 14 天后停用 3X-UI 主控。
+
+**回退**：控制台里把这台切回“只读观察”，3X-UI 主控里重新启用节点、订阅域名指回主控。服务器上的 Xray 配置不变。
+
+接管时控制台会把原来手写的落地出站和“入站→落地”规则换成 `px-` 开头的同等规则（出口不变），以后改端口、删入站都不会再丢规则。
+
+## 三、订阅服务（独立一台，走 Cloudflare）
+
+1. 控制台「安全与对接 → 添加订阅节点」，填一个名称和**订阅服务器能访问到的控制台地址**，得到一行命令。
+2. 在订阅服务器上用 root 粘贴执行。默认监听 80，且只允许 Cloudflare 访问。
+3. Cloudflare 把 `clbstar.vertex-astra.com` 解析到这台服务器（开小黄云）。默认是 80 端口回源，需要用 Cloudflare 的 Configuration Rules 只给这个子域设 SSL“灵活”；想按 PRD 用 Full (strict)，在订阅服务器依次执行 `pxc cert clbstar.vertex-astra.com 你的CF令牌`、`pxc port 443`、`pxc cf-firewall`。
+4. 控制台「外观与通知 → 订阅对外地址」填 `https://clbstar.vertex-astra.com`。
+
+订阅服务不存数据，每 20 秒从控制台只读同步并缓存到本地；控制台连不上时继续用缓存出订阅。IP 被封：新机器上再执行一次第 1–2 步，改 DNS 即可。旧 3X-UI 订阅地址 `/sub/<subId>` 继续可用，用户不用改（3X-UI 里订阅路径改过的话，在订阅服务器执行 `pxc legacy-path /你的路径/`）。
+
+订阅地址格式：`https://订阅域名/s/<16位令牌>`，可加 `?target=clash|singbox|v2ray|shadowrocket`；OpenClash 只要节点用 `?target=clash&nodes=1`（proxy-provider）。
+
+## 四、新服务器一键接入
+
+「服务器 → 一键接入新服务器」：填名称、地区、节点域名、控制台地址（建议 Tailscale 内网），可选 Tailscale 授权密钥、Cloudflare 令牌 → 得到一行命令，在新 VPS 上 root 粘贴。完成后服务器自动出现在列表里（直接是接管模式），再去「一键建线路」。
+
+## 五、管理命令
+
+服务器上输入 `pxc` 出现中文菜单；也可以直接 `pxc restart`、`pxc url`、`pxc reset-password`、`pxc reset-2fa`（手机丢了）、`pxc backup`、`pxc update`、`pxc rollback`、`pxc log`。
+
+## 六、需要你在真实环境确认的地方
+
+- **3X-UI 接口版本**：按 3X-UI 2.x/3.x 公开的 `/panel/api/` 接口和 `/panel/xray/` 模板接口实现（旧路径自动兜底）。上线前在 HK D 上跑一次「测试连接 → 导入这台的配置 → 立即比对」，差异应为 0；若报“面板没有这个接口”，把报错发我。
+- **3X-UI 会自动把入站 tag 设成 `inbound-端口`**，控制台的稳定标签写在入站备注里，路由规则推送时按当前端口换算，所以改端口不会丢规则。
+- Shadowrocket 与 Reality 的兼容、各客户端实测矩阵（PRD F15）还需要逐个用最新版验证。
+- PRD 待定问题 2（套餐划分）、3（告警发 Telegram 还是企业微信）：本版支持 Telegram 和 CRM Webhook，企业微信可由 CRM 接 Webhook 转发。
+
+## 开发
+
+```
+pip install -r requirements.txt pytest && python -m pytest -q tests
+```
+
+`tests/mock_xui.py` 是一个模拟 3X-UI 面板，测试覆盖：导入后只读差异为 0、接管后出口语义不变、手动删用户被补回、手动加的入站被清理、套餐授权、SS 密钥填错被拦、Xray 起不来自动回滚、退避重试与任务合并、流量合计与超额停用/恢复、负载均衡与测速、后台登录/TOTP/锁定/再验证、各格式订阅、CRM 接口与免登、订阅服务离线缓存。

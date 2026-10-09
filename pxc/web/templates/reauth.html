@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block h1 %}请再次验证{% endblock %}{% block body %}
+<div class="card" style="max-width:420px">
+  <p>这是敏感操作，需要重新输入动态验证码（或备用码）。5 分钟内不用再输。</p>
+  <form method="post" style="display:flex;gap:8px">
+    <input type="hidden" name="next" value="{{ nxt }}">
+    <input type="text" name="code" inputmode="numeric" placeholder="验证码" required autofocus>
+    <button class="btn p">验证</button>
+  </form>
+</div>{% endblock %}

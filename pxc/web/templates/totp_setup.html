@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block h1 %}绑定二次认证{% endblock %}{% block body %}
+<div class="card">
+  <p>为了安全，首次登录必须绑定动态验证码，不能跳过。</p>
+  <ol>
+    <li>手机打开 Google Authenticator / Microsoft Authenticator / 1Password，扫描下面的二维码；</li>
+    <li>扫不了就手动输入密钥：<code>{{ secret }}</code>；</li>
+    <li>把 App 上显示的 6 位数字填到下面，点“完成绑定”。</li>
+  </ol>
+  <div class="qr">{{ qr|safe }}</div>
+  <form method="post" style="display:flex;gap:8px;margin-top:14px;max-width:360px">
+    <input type="text" name="code" inputmode="numeric" placeholder="6 位验证码" required autofocus>
+    <button class="btn p">完成绑定</button>
+  </form>
+</div>{% endblock %}

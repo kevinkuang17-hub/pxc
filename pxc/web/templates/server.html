@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block h1 %}服务器 · {{ srv.name }}{% endblock %}{% block body %}
+<div class="toolbar">
+  <a class="btn" href="{{ url_for('admin.r_edit', res='servers', oid=srv.id) }}">编辑</a>
+  {% for act, label, cf in [('test','测试连接',''),('compare','立即比对',''),('push','立即推送','确定把控制台的应有状态推送到这台服务器？'),('restart','重启 Xray','确定重启 Xray？在线用户会断开几秒。'),('import','导入这台的配置','从这台服务器导入入站、用户和落地关系？已导入过的不会重复。')] %}
+  <form method="post" action="{{ url_for('admin.server_action', sid=srv.id) }}" {% if cf %}data-confirm="{{ cf }}"{% endif %}><input type="hidden" name="act" value="{{ act }}"><button class="btn {{ 'p' if act=='push' }}">{{ label }}</button></form>
+  {% endfor %}
+  <a class="btn" href="{{ url_for('admin.server_logs', sid=srv.id) }}">错误日志</a>
+  <span class="sp"></span>
+  <form method="post" action="{{ url_for('admin.server_action', sid=srv.id) }}" data-confirm="{{ '切换为“控制台接管”后，服务器上的入站、用户、出站和路由都以控制台为准，手动改动会被还原。确定？' if srv.mode=='observe' else '切回“只读观察”后不再下发任何改动。确定？' }}"><input type="hidden" name="act" value="mode"><button class="btn">{{ '切换为控制台接管' if srv.mode=='observe' else '切回只读观察' }}</button></form>
+  <form method="post" action="{{ url_for('admin.server_action', sid=srv.id) }}"><input type="hidden" name="act" value="maintenance"><button class="btn">{{ '结束维护' if srv.maintenance else '标记维护中' }}</button></form>
+</div>
+<div class="grid" style="margin-bottom:16px">
+  <div class="stat"><div class="k">状态</div><div class="v">{{ {'online':'在线','offline':'离线'}.get(srv.status,'未知') }}{% if srv.maintenance %} · 维护{% endif %}</div></div>
+  <div class="stat"><div class="k">模式</div><div class="v">{{ '已接管' if srv.mode=='managed' else '只读观察' }}</div></div>
+  <div class="stat"><div class="k">Xray</div><div class="v" style="font-size:16px">{{ srv.xray_state or '—' }} {{ srv.xray_version }}</div></div>
+  <div class="stat"><div class="k">CPU / 内存 / 在线</div><div class="v" style="font-size:16px">{{ '%.0f'|format(srv.cpu or 0) }}% / {{ '%.0f'|format(srv.mem or 0) }}% / {{ srv.online_users or 0 }}</div></div>
+</div>
+{% if verrs %}<div class="card" style="border-color:var(--err)"><h2 style="color:var(--err)">校验未通过（不会推送）</h2><ul class="notes">{% for e in verrs %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="card"><h2>与应有状态的差异（{{ srv.last_diff_count or 0 }}）</h2>
+{% if notes %}<ul class="notes">{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul>
+{% else %}<p class="muted">上次比对一致。{% if srv.mode=='observe' %}只读观察期间连续 7 天差异为 0，就可以切换为“控制台接管”。{% endif %}</p>{% endif %}
+{% if srv.last_error %}<p class="small" style="color:var(--err)">最近错误：{{ srv.last_error }}</p>{% endif %}
+</div>
+<div class="card"><h2>入站</h2><div class="tbl"><table><thead><tr><th>标签</th><th>类型</th><th>协议</th><th>端口</th><th>启用</th></tr></thead><tbody>
+{% for i in inbs %}<tr><td><a href="{{ url_for('admin.r_edit', res='inbounds', oid=i.id) }}">{{ i.tag }}</a></td><td>{{ '落地' if i.kind=='exit' else '入口' }}</td><td>{{ i.protocol }} {{ i.transport }} {{ i.security }}</td><td>{{ i.port }}</td><td>{{ '是' if i.enabled else '否' }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">还没有入站。可以“导入这台的配置”，或去“一键建线路”。</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><h2>推送记录</h2><div class="tbl"><table><thead><tr><th>时间</th><th>状态</th><th>次数</th><th>原因</th><th>错误</th></tr></thead><tbody>
+{% for j in jobs %}<tr><td>{{ fmt_dt(j.created_at) }}</td><td>{{ {'done':'完成','dead':'失败','pending':'排队','running':'执行中'}.get(j.status, j.status) }}</td><td>{{ j.attempts }}</td><td class="wrap">{{ j.reason[:80] }}</td><td class="wrap small">{{ j.error[:200] }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">暂无</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block h1 %}二次认证已绑定{% endblock %}{% block body %}
+<div class="card">
+  <p><b>请把下面 10 个备用码抄下来或存进密码管理器。</b>手机丢失时用来登录，每个只能用一次。这一页离开后不会再显示。</p>
+  <div class="codes" id="codes">{% for c in codes %}<code>{{ c }}</code>{% endfor %}</div>
+  <p style="margin-top:14px"><button class="btn" onclick="copyText('codes',this)">复制</button>
+  <a class="btn p" href="{{ url_for('admin.dash') }}">我已保存，进入后台</a></p>
+</div>{% endblock %}

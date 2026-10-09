@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block h1 %}操作日志{% endblock %}{% block body %}
+<div class="toolbar"><form method="get" style="display:flex;gap:6px"><input type="text" name="q" value="{{ kw }}" placeholder="按对象或动作查询" style="width:240px"><button class="btn">查询</button></form><a class="btn" href="{{ url_for('admin.audit_log') }}">刷新</a></div>
+<div class="tbl"><table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>内容</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ fmt_dt(r.created_at) }}</td><td>{{ r.operator }}</td><td>{{ r.action }}</td><td>{{ r.target }}</td><td class="wrap small"><details><summary class="muted">展开</summary>{% if r.before %}<pre>{{ r.before[:3000] }}</pre>{% endif %}<pre>{{ r.after[:3000] }}</pre></details></td></tr>
+{% endfor %}</tbody></table></div>{% endblock %}
