@@ -21,6 +21,16 @@
 {% else %}<p class="muted">上次比对一致。{% if srv.mode=='observe' %}只读观察期间连续 7 天差异为 0，就可以切换为“控制台接管”。{% endif %}</p>{% endif %}
 {% if srv.last_error %}<p class="small" style="color:var(--err)">最近错误：{{ srv.last_error }}</p>{% endif %}
 </div>
+<div class="card"><h2>域名与 IP</h2>
+  <p>节点域名 <b>{{ srv.domain or '未填' }}</b> · IP <b>{{ srv.ip or '未填' }}</b>{% if srv.dns_record_id %} · <span class="tag c">解析由控制台管理</span>{% endif %}</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <form method="post" action="{{ url_for('admin.server_dns', sid=srv.id) }}"><input type="hidden" name="act" value="ensure"><button class="btn">同步解析（灰云 TTL 60）</button></form>
+    <form method="post" action="{{ url_for('admin.server_dns', sid=srv.id) }}" data-confirm="把这条手动建的解析记录交给控制台管理？"><input type="hidden" name="act" value="adopt"><button class="btn">接管这条记录</button></form>
+    <form method="post" action="{{ url_for('admin.server_dns', sid=srv.id) }}" style="display:flex;gap:6px" data-confirm="确定换 IP？会同时改面板地址和 DNS 解析。"><input type="hidden" name="act" value="change_ip"><input type="text" name="ip" placeholder="新 IP" style="width:160px"><button class="btn p">一键换 IP</button></form>
+  </div>
+  <p class="muted small">IP 被封、换了新 IP 后用“一键换 IP”：改服务器 IP、面板地址和 Cloudflare 解析。订阅里用的是域名，用户不用刷新订阅。</p>
+</div>
+{% if trend_svg %}<div class="card"><h2>近 30 天流量</h2><div class="legend"><span><i class="s1"></i>上行</span><span><i class="s2"></i>下行</span></div>{{ trend_svg|safe }}</div>{% endif %}
 <div class="card"><h2>入站</h2><div class="tbl"><table><thead><tr><th>标签</th><th>类型</th><th>协议</th><th>端口</th><th>启用</th></tr></thead><tbody>
 {% for i in inbs %}<tr><td><a href="{{ url_for('admin.r_edit', res='inbounds', oid=i.id) }}">{{ i.tag }}</a></td><td>{{ '落地' if i.kind=='exit' else '入口' }}</td><td>{{ i.protocol }} {{ i.transport }} {{ i.security }}</td><td>{{ i.port }}</td><td>{{ '是' if i.enabled else '否' }}</td></tr>
 {% else %}<tr><td colspan="5" class="muted">还没有入站。可以“导入这台的配置”，或去“一键建线路”。</td></tr>{% endfor %}</tbody></table></div></div>

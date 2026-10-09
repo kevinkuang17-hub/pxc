@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block h1 %}分流规则{% endblock %}{% block body %}
+<div class="toolbar">
+  <a class="btn p" href="{{ url_for('admin.ruleset_edit') }}">＋ 新增规则集</a>
+  <a class="btn" href="{{ url_for('admin.profile_edit') }}">＋ 新增方案</a>
+  <a class="btn" href="{{ url_for('admin.rules_test') }}">测试：这个网站走哪</a>
+  {% if not sets %}<form method="post"><input type="hidden" name="act" value="seed"><button class="btn">一键建好常用规则</button></form>{% endif %}
+</div>
+<div class="card"><h2>规则方案</h2><p class="muted small">方案 = 有顺序的“规则集 → 策略”。套餐绑定一个默认方案，用户可单独换；用户的需求开关（AI 走美国、广告拦截…）排在方案前面。没设方案的用户用内置标准规则。</p>
+<div class="tbl"><table><thead><tr><th>名称</th><th>规则</th><th>兜底</th><th>版本</th></tr></thead><tbody>
+{% for p in profiles %}{% set its = p.items|fromjson %}<tr><td><a href="{{ url_for('admin.profile_edit', pid=p.id) }}">{{ p.name }}</a></td>
+<td class="wrap small">{% for it in its %}{% for rs in sets if rs.id == it.ruleset_id %}{{ rs.name }} → {{ it.policy }}{% endfor %}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+<td>{{ p.final_policy }}</td><td>v{{ p.version }}</td></tr>{% else %}<tr><td colspan="4" class="muted">还没有方案</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><h2>规则集</h2>
+<div class="tbl"><table><thead><tr><th>名称</th><th>来源</th><th>条数</th><th>版本</th><th>最近拉取</th><th>状态</th><th>被哪些方案使用</th></tr></thead><tbody>
+{% for r in sets %}<tr><td><a href="{{ url_for('admin.ruleset_edit', rid=r.id) }}">{{ r.name }}</a></td>
+<td>{{ '远程' if r.source=='remote' else '自维护' }}</td><td>{{ r.count or 0 }}</td><td>v{{ r.version }}</td><td>{{ fmt_dt(r.last_fetched_at) }}</td>
+<td>{% if r.pending_content %}<span class="tag warn">待确认</span>{% elif r.last_error %}<span class="tag err">异常</span>{% elif r.count %}<span class="tag ok">正常</span>{% else %}<span class="tag">待拉取</span>{% endif %}</td>
+<td class="small">{{ (used.get(r.id) or [])|join('、') or '—' }}</td></tr>
+{% else %}<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">还没有规则集，可以点上面的“一键建好常用规则”</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

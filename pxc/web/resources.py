@@ -53,6 +53,25 @@ def _plans():
     return [("", "（无套餐）")] + [(p.id, p.name) for p in Session().query(Plan).order_by(Plan.name)]
 
 
+def _profiles(blank):
+    def f():
+        from ..models import RuleProfile
+        return [("", blank)] + [(p.id, p.name) for p in Session().query(RuleProfile).order_by(RuleProfile.name)]
+    return f
+
+
+def _toggles_get(c):
+    from ..rules import effective_toggles
+    return [k for k, v in effective_toggles(c).items() if v]
+
+
+def _toggles_set(c, keys):
+    """和“跟随方案”的默认值一样就不单独保存，以后换方案时开关跟着变。"""
+    from ..rules import TOGGLES, implicit_toggles
+    want = {k: (k in keys) for k, _, _, _, _ in TOGGLES}
+    c.rule_toggles = "" if want == implicit_toggles(c) else json.dumps(want)
+
+
 def _clients():
     return [("", "（不限）")] + [(c.id, c.name) for c in Session().query(Client).order_by(Client.name)]
 
@@ -165,6 +184,11 @@ def inbound_check(obj, form):
                                   Inbound.enabled.is_(True)).first()
     if dup:
         errs.append(f"端口 {obj.port} 已被同服务器的 {dup.tag} 使用")
+    if obj.client_address:
+        from ..cloudflare import CF_HTTPS_PORTS
+        port = obj.client_port or obj.port
+        if port not in CF_HTTPS_PORTS:
+            errs.append(f"走 Cloudflare 的线路端口只能是 {'/'.join(map(str, sorted(CF_HTTPS_PORTS)))}，现在是 {port}")
     if errs:
         raise Invalid("；".join(errs))
 
@@ -375,6 +399,7 @@ RESOURCES = {
             F("device_limit", "设备数", "int", default=0, help="0 = 不限（节点按同时在线 IP 限制）"),
             F("groups", "包含线路组", "multi", choices=_groups, get=_plan_groups_get, set=_plan_groups_set,
               after_flush=True),
+            F("rule_profile_id", "默认分流方案", "select", choices=_profiles("（内置标准规则）"), coerce=int),
         ]},
     "clients": {
         "title": "用户", "model": Client, "order": Client.name, "check": client_check, "detail": True,
@@ -389,6 +414,12 @@ RESOURCES = {
               after_flush=True),
             F("exclude", "排除的线路", "multi", choices=_lines, get=_ov_get("exclude"), set=_ov_set("exclude"),
               after_flush=True),
+            F("rule_profile_id", "分流方案", "select", choices=_profiles("（用套餐的方案）"), coerce=int, group="分流"),
+            F("rule_toggles", "需求开关", "multi", str=True, group="分流",
+              choices=lambda: [(k, n) for k, n, _, _, _ in __import__("pxc.rules", fromlist=["TOGGLES"]).TOGGLES],
+              get=_toggles_get, set=_toggles_set, help="不改就跟随方案：没有分流方案时默认开前三项；有方案时以方案为准"),
+            F("custom_direct", "自定义直连域名", "textarea", group="分流", help="每行一个，如 example.cn"),
+            F("custom_proxy", "自定义代理域名", "textarea", group="分流"),
             F("sub_format", "默认订阅格式", "select", choices=lambda: [("", "自动识别"), ("v2ray", "v2ray 链接"),
                                                                  ("clash", "Clash Meta"), ("singbox", "sing-box"),
                                                                  ("shadowrocket", "Shadowrocket")]),
@@ -413,7 +444,7 @@ def apply_form(res, obj, form):
             continue
         n, t = f["name"], f["type"]
         if t == "multi":
-            vals = [int(x) for x in form.getlist(n) if x]
+            vals = [x if f.get("str") else int(x) for x in form.getlist(n) if x]
             if f.get("after_flush"):
                 later.append((f, vals))
             else:
@@ -459,6 +490,8 @@ def field_value(f, obj):
     if f.get("virtual"):
         return ""
     if f["type"] == "multi":
+        if f.get("str") and obj is not None:
+            return f["get"](obj)
         return f["get"](obj) if obj is not None and obj.id else []
     v = getattr(obj, f["name"], None) if obj is not None else None
     if v is None and obj is not None and not obj.id:

@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block h1 %}这个网站会走哪{% endblock %}{% block body %}
+<form method="post" class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+  <select name="client_id" style="max-width:220px">{% for c in clients %}<option value="{{ c.id }}" {{ 'selected' if res and res.client.id == c.id }}>{{ c.name }}</option>{% endfor %}</select>
+  <input type="text" name="domain" value="{{ res.domain if res else '' }}" placeholder="chatgpt.com" style="max-width:280px" required>
+  <button class="btn p">测试</button>
+</form>
+{% if res %}<div class="card"><h2>结论：{{ res.domain }} → <span style="color:var(--c)">{{ res.verdict }}</span></h2>
+<p class="muted small">{{ res.client.name }} 拥有的线路组：{{ res.groups|join('、') or '无' }}</p>
+{% if res.note %}<p class="small" style="color:var(--warn)">{{ res.note }}</p>{% endif %}
+<div class="tbl"><table><thead><tr><th>#</th><th>规则</th><th>结果</th><th>策略</th></tr></thead><tbody>
+{% for name, r, pol in res.steps %}<tr><td>{{ loop.index }}</td><td>{{ name }}</td><td><span class="tag {{ 'ok' if r=='命中' else 'warn' if r!='未命中' else '' }}">{{ r }}</span></td><td>{{ pol }}</td></tr>{% endfor %}
+</tbody></table></div></div>{% endif %}{% endblock %}

@@ -17,6 +17,9 @@ LABELS = {
     "traffic_80": "流量已用 80%", "traffic_100": "流量已用完", "expiring": "即将到期", "expired": "已到期",
     "server_offline": "服务器离线", "server_online": "服务器恢复", "push_failed": "推送连续失败",
     "push_rollback": "推送后 Xray 无法启动，已回滚", "login_new_ip": "新 IP 登录后台",
+    "line_down": "线路连续探测失败（已从订阅摘除）", "line_up": "线路恢复", "reality_target": "Reality 伪装目标不可用",
+    "consistency": "域名/IP/证书/SNI 不一致", "ruleset_review": "规则集变化过大，等待确认",
+    "probe_suppressed": "大部分线路同时探测失败（已暂停自动摘除）",
 }
 
 

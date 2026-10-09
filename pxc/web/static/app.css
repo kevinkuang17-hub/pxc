@@ -71,3 +71,33 @@ ul.notes{margin:0;padding-left:18px}
 .qr svg{width:180px;height:180px;background:#fff;padding:6px;border-radius:8px}
 .codes{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;max-width:300px}
 @media (max-width:760px){.side{display:none}.content{padding:14px}form.f .row{grid-template-columns:1fr}}
+/* 图表（系列色经 dataviz 校验：亮色 #2a78d6/#eb6834，暗色 #3987e5/#d95926） */
+:root{--series-1:#2a78d6;--series-2:#eb6834;--axis:#8a8f98}
+@media (prefers-color-scheme:dark){:root{--series-1:#3987e5;--series-2:#d95926;--axis:#7d8594}}
+.chart{width:100%;height:auto;display:block;max-width:980px}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .ax{fill:var(--muted);font-size:11px}
+.chart .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .ln.s1,.chart .dot.s1,.chart .bar.s1{stroke:var(--series-1)}.chart .bar.s1,.chart .dot.s1{fill:var(--series-1)}
+.chart .ln.s2,.chart .dot.s2{stroke:var(--series-2)}.chart .dot.s2{fill:var(--series-2)}
+.chart .dot{stroke:var(--card);stroke-width:2}
+.chart .bar{stroke:none}
+.chart .hair{stroke:var(--axis);stroke-width:1;opacity:0}
+.chart .col:hover .hair{opacity:1}
+.chart .hm.l0{fill:var(--line)}
+.chart .hm.l1{fill:color-mix(in srgb,var(--series-1) 18%,var(--card))}
+.chart .hm.l2{fill:color-mix(in srgb,var(--series-1) 36%,var(--card))}
+.chart .hm.l3{fill:color-mix(in srgb,var(--series-1) 56%,var(--card))}
+.chart .hm.l4{fill:color-mix(in srgb,var(--series-1) 78%,var(--card))}
+.chart .hm.l5{fill:var(--series-1)}
+.chart [data-tip]:hover{cursor:default}
+.legend{display:flex;gap:16px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:6px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.legend i.s1{background:var(--series-1)}.legend i.s2{background:var(--series-2)}
+.legend i.sq{width:10px;height:10px;border-radius:2px}
+.tip{position:fixed;pointer-events:none;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:60;white-space:nowrap;display:none}
+.meter{height:6px;background:var(--line);border-radius:99px;overflow:hidden;min-width:80px}
+.meter i{display:block;height:100%;background:var(--series-1);border-radius:99px}
+.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tabs a{padding:5px 12px;border-radius:7px;border:1px solid var(--line);color:var(--text)}
+.tabs a.on{border-color:var(--c);color:var(--c)}

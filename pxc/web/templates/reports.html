@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block h1 %}流量报表{% endblock %}{% block body %}
+<div class="toolbar">
+  <div class="tabs" style="margin:0">{% for d in (7,30,90) %}<a class="{{ 'on' if d==days }}" href="?days={{ d }}">近 {{ d }} 天</a>{% endfor %}</div>
+  <span class="sp"></span><a class="btn" href="{{ url_for('admin.report_export', days=days) }}">导出 CSV</a>
+</div>
+<div class="grid" style="margin-bottom:16px">
+  <div class="stat"><div class="k">今日流量</div><div class="v">{{ hb(ov.today) }}</div></div>
+  <div class="stat"><div class="k">本月流量</div><div class="v">{{ hb(ov.month) }}</div></div>
+  <div class="stat"><div class="k">近 {{ days }} 天合计</div><div class="v">{{ hb(total) }}</div></div>
+  <div class="stat"><div class="k">用户 / 服务器</div><div class="v">{{ ov.clients }} / {{ ov.servers }}</div></div>
+</div>
+<div class="card"><h2>每日流量（所有用户、所有服务器合计）</h2>
+  <div class="legend"><span><i class="s1"></i>上行</span><span><i class="s2"></i>下行</span></div>
+  {{ trend_svg|safe }}
+  <details style="margin-top:8px"><summary class="muted small">表格</summary><div class="tbl" style="margin-top:6px"><table><thead><tr><th>日期</th><th>上行</th><th>下行</th></tr></thead><tbody>
+  {% for d, u, dn in trend|reverse %}<tr><td>{{ d }}</td><td>{{ hb(u) }}</td><td>{{ hb(dn) }}</td></tr>{% endfor %}</tbody></table></div></details>
+</div>
+<div class="card"><h2>高峰时段（近 4 周，星期 × 小时）</h2>
+  <div class="legend"><span>少</span>{% for i in range(6) %}<svg width="12" height="12" class="chart" style="display:inline;width:12px"><rect class="hm l{{ i }}" width="12" height="12" rx="2"/></svg>{% endfor %}<span>多</span></div>
+  {{ heat_svg|safe }}
+</div>
+<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">
+{% for title, rows in (('用户排行', users), ('服务器排行', servers), ('线路排行', lines)) %}
+<div class="card"><h2>{{ title }}</h2>{% set top = rows[0][3] if rows else 1 %}
+<div class="tbl"><table><thead><tr><th>名称</th><th>流量</th><th style="width:40%"></th></tr></thead><tbody>
+{% for name, u, d, t in rows %}<tr><td>{{ name }}</td><td data-tip="上行 {{ hb(u) }}　下行 {{ hb(d) }}">{{ hb(t) }}</td><td><div class="meter"><i style="width:{{ (100 * t / top)|round(1) if top else 0 }}%"></i></div></td></tr>
+{% else %}<tr><td colspan="3" class="muted">暂无数据</td></tr>{% endfor %}</tbody></table></div></div>
+{% endfor %}</div>
+<p class="muted small">口径：内核按用户统计的字节数，每分钟采集一次；日期按北京时间。各应用 / 访问目标国家的分布要等 sing-box 节点或连接日志采集（下一版）。</p>
+{% endblock %}

@@ -36,6 +36,7 @@ def build_snapshot():
         if n:
             n["order"] = list(order_key.get(lid, (99999, 999, l.name)))
             nodes[str(lid)] = n
+    from .rules import client_rule_spec, rulesets_meta
     gl = _group_lines(s)
     clients = {}
     t = dt.datetime.utcnow()
@@ -48,6 +49,7 @@ def build_snapshot():
             "expire": int(c.expire_at.replace(tzinfo=dt.timezone.utc).timestamp()) if c.expire_at else 0,
             "format": c.sub_format or "",
             "lines": sorted(str(i) for i in allowed_line_ids(c, gl) if str(i) in nodes),
+            "rules": client_rule_spec(c),
         }
     return {
         "generated_at": int(time.time()),
@@ -62,6 +64,7 @@ def build_snapshot():
                    for g in groups],
         "nodes": nodes,
         "clients": clients,
+        "rulesets": rulesets_meta(),
     }
 
 
@@ -69,7 +72,7 @@ def node_of(line):
     """把一条线路变成客户端连接参数；不可用（停用/服务器离线/维护）返回 None。"""
     from . import crypto
     inb = line.entry
-    if not line.enabled or not inb or not inb.enabled or inb.kind != "entry":
+    if not line.enabled or line.auto_down or not inb or not inb.enabled or inb.kind != "entry":
         return None
     srv = inb.server
     if srv.maintenance or srv.status == "offline":
@@ -154,8 +157,8 @@ def _hint(text):
             "security": "none", "sni": "", "fp": "chrome", "path": "", "host": "", "vision": False}
 
 
-def render(snap, c, fmt, nodes_only=False):
-    """返回 (body, content_type)。"""
+def render(snap, c, fmt, nodes_only=False, base_url=""):
+    """返回 (body, content_type)。base_url 用来生成规则文件地址（订阅服务自己托管）。"""
     nodes = [n for _, n in client_nodes(snap, c, fmt)]
     if not c["active"]:
         reason = {"quota": "流量已用完", "expired": "已到期"}.get(c["reason"], "已停用")
@@ -163,9 +166,9 @@ def render(snap, c, fmt, nodes_only=False):
     elif not nodes:
         nodes = [_hint("⚠ 当前客户端无可用线路，请换 Happ / Clash Verge")]
     if fmt == "clash":
-        return render_clash(snap, c, nodes, nodes_only), "text/yaml; charset=utf-8"
+        return render_clash(snap, c, nodes, nodes_only, base_url), "text/yaml; charset=utf-8"
     if fmt == "singbox":
-        return render_singbox(snap, c, nodes), "application/json; charset=utf-8"
+        return render_singbox(snap, c, nodes, base_url), "application/json; charset=utf-8"
     links = "\n".join(filter(None, (v2ray_link(n, c) for n in nodes)))
     return base64.b64encode(links.encode()).decode(), "text/plain; charset=utf-8"
 
@@ -261,7 +264,14 @@ def _pick_group(gnames, *keywords):
     return None
 
 
-def render_clash(snap, c, nodes, nodes_only=False):
+def _rules_for(snap, c, gnames):
+    from .rules import rule_list
+    spec = c.get("rules") or {"profile": None, "toggles": {"adblock": True, "ai_us": True, "media": True},
+                             "direct": [], "proxy": []}
+    return rule_list(spec, gnames, snap.get("rulesets", {}))
+
+
+def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
     proxies = [clash_proxy(n, c) for n in nodes]
     if nodes_only:
         return yaml.safe_dump({"proxies": proxies}, allow_unicode=True, sort_keys=False)
@@ -278,8 +288,24 @@ def render_clash(snap, c, nodes, nodes_only=False):
     gnames = [g["name"] for g in groups]
     main = {"name": MAIN, "type": "select", "proxies": [AUTO] + gnames + names + ["DIRECT"]}
     auto = {"name": AUTO, "type": "url-test", "url": TEST_URL, "interval": 300, "tolerance": 50, "proxies": names}
-    ai = _pick_group(gnames, "AI", "美国", "US") or MAIN
-    media = _pick_group(gnames, "流媒体", "香港", "HK", "新加坡") or MAIN
+    rules, providers = [], {}
+    meta = snap.get("rulesets", {})
+    for kind, val, pol in _rules_for(snap, c, gnames):
+        p = pol or MAIN
+        if kind == "MATCH":
+            rules.append(f"MATCH,{p}")
+        elif kind == "RULESET":
+            tag = f"pxc-{val}"
+            beh = meta[val].get("behavior", "classical")
+            ext = "list" if beh == "classical" else f"{beh}.txt"
+            providers[tag] = {"type": "http", "behavior": beh, "format": "text",
+                              "url": f"{base_url}/r/{val}.{ext}?v={meta[val]['hash']}",
+                              "path": f"./ruleset/{tag}.txt", "interval": 86400}
+            rules.append(f"RULE-SET,{tag},{p}" + (",no-resolve" if beh == "ipcidr" else ""))
+        elif kind == "GEOIP":
+            rules.append(f"GEOIP,{val},{p},no-resolve" if val == "private" else f"GEOIP,{val},{p}")
+        else:
+            rules.append(f"{kind},{val},{p}")
     cfg = {
         "mixed-port": 7890, "allow-lan": False, "mode": "rule", "log-level": "warning", "ipv6": False,
         "unified-delay": True, "tcp-concurrent": True, "find-process-mode": "strict",
@@ -293,15 +319,10 @@ def render_clash(snap, c, nodes, nodes_only=False):
                                                                    "https://8.8.8.8/dns-query#" + MAIN]}},
         "proxies": proxies,
         "proxy-groups": [main, auto] + groups,
-        "rules": [
-            "GEOSITE,private,DIRECT", "GEOIP,private,DIRECT,no-resolve",
-            "GEOSITE,category-ads-all,REJECT",
-            f"GEOSITE,openai,{ai}", f"GEOSITE,anthropic,{ai}", f"GEOSITE,google-gemini,{ai}",
-            f"GEOSITE,netflix,{media}", f"GEOSITE,youtube,{media}",
-            "GEOSITE,microsoft@cn,DIRECT", "GEOSITE,apple-cn,DIRECT",
-            "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT", f"MATCH,{MAIN}",
-        ],
     }
+    if providers:
+        cfg["rule-providers"] = providers
+    cfg["rules"] = rules
     return yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
 
 
@@ -333,7 +354,10 @@ def singbox_outbound(n, c):
     return o
 
 
-def render_singbox(snap, c, nodes):
+SB_GEOSITES = {"cn", "category-ads-all", "openai", "anthropic", "netflix", "youtube", "disney", "microsoft"}
+
+
+def render_singbox(snap, c, nodes, base_url=""):
     outs = [singbox_outbound(n, c) for n in nodes]
     names = [o["tag"] for o in outs]
     lid_name = {lid: n["name"] for lid, n in client_nodes(snap, c, "singbox")}
@@ -345,9 +369,37 @@ def render_singbox(snap, c, nodes):
             groups.append({"type": "urltest", "tag": g["name"], "outbounds": members, "url": TEST_URL,
                            "interval": "5m", "tolerance": 50})
     gnames = [g["tag"] for g in groups]
-    rs = lambda tag, kind: {"tag": tag, "type": "remote", "format": "binary", "download_detour": MAIN,
-                            "url": f"https://raw.githubusercontent.com/SagerNet/sing-{kind}/rule-set/{tag}.srs"}
-    ai = _pick_group(gnames, "AI", "美国", "US") or MAIN
+    meta = snap.get("rulesets", {})
+    sets = {}
+
+    def remote(tag, kind):
+        sets[tag] = {"tag": tag, "type": "remote", "format": "binary", "download_detour": MAIN,
+                     "url": f"https://raw.githubusercontent.com/SagerNet/sing-{kind}/rule-set/{tag}.srs"}
+        return tag
+
+    remote("geosite-cn", "geosite")
+    rules = [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}]
+    final = MAIN
+    for kind, val, pol in _rules_for(snap, c, gnames):
+        target = ({"action": "reject"} if pol == "REJECT" else
+                  {"outbound": "direct"} if pol == "DIRECT" else {"outbound": pol or MAIN})
+        if kind == "MATCH":
+            final = "direct" if pol == "DIRECT" else (pol or MAIN)
+            continue
+        if kind == "GEOIP" and val == "private":
+            rules.append(dict({"ip_is_private": True}, **target))
+        elif kind == "GEOIP":
+            rules.append(dict({"rule_set": [remote(f"geoip-{val.lower()}", "geoip")]}, **target))
+        elif kind == "GEOSITE":
+            if val in SB_GEOSITES:
+                rules.append(dict({"rule_set": [remote(f"geosite-{val}", "geosite")]}, **target))
+        elif kind == "DOMAIN-SUFFIX":
+            rules.append(dict({"domain_suffix": [val]}, **target))
+        elif kind == "RULESET":
+            tag = f"pxc-{val}"
+            sets[tag] = {"tag": tag, "type": "remote", "format": "source", "download_detour": "direct",
+                         "url": f"{base_url}/r/{val}.json?v={meta[val]['hash']}", "update_interval": "24h"}
+            rules.append(dict({"rule_set": [tag]}, **target))
     cfg = {
         "log": {"level": "warn"},
         "dns": {"servers": [{"tag": "remote", "address": "https://1.1.1.1/dns-query", "detour": MAIN},
@@ -360,15 +412,7 @@ def render_singbox(snap, c, nodes):
         "outbounds": [{"type": "selector", "tag": MAIN, "outbounds": [AUTO] + gnames + names + ["direct"]},
                       {"type": "urltest", "tag": AUTO, "outbounds": names, "url": TEST_URL, "interval": "5m"}]
                      + groups + outs + [{"type": "direct", "tag": "direct"}],
-        "route": {"auto_detect_interface": True, "final": MAIN,
-                  "rules": [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"},
-                            {"ip_is_private": True, "outbound": "direct"},
-                            {"rule_set": ["geosite-category-ads-all"], "action": "reject"},
-                            {"rule_set": ["geosite-openai", "geosite-anthropic"], "outbound": ai},
-                            {"rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct"}],
-                  "rule_set": [rs("geosite-cn", "geosite"), rs("geoip-cn", "geoip"),
-                               rs("geosite-category-ads-all", "geosite"), rs("geosite-openai", "geosite"),
-                               rs("geosite-anthropic", "geosite")]},
+        "route": {"auto_detect_interface": True, "final": final, "rules": rules, "rule_set": list(sets.values())},
         "experimental": {"cache_file": {"enabled": True}},
     }
     return json.dumps(cfg, ensure_ascii=False, indent=2)

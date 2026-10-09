@@ -2,7 +2,17 @@
 import datetime as dt
 
 from . import events
-from .models import (Client, ClientEmail, Inbound, Server, Session, Traffic, TrafficCounter, audit, now)
+from .models import (Client, ClientEmail, Inbound, Line, Server, Session, Traffic, TrafficCounter, TrafficHourly,
+                     audit, get_setting, now)
+
+
+def local_now():
+    """报表按这个时区切日 / 小时（默认北京时间）。"""
+    try:
+        off = float(get_setting("tz_offset", "8") or 8)
+    except ValueError:
+        off = 8
+    return dt.datetime.utcnow() + dt.timedelta(hours=off)
 from .state import allowed_line_ids
 from .sync import client_for, enqueue_push
 from .xui import XuiError
@@ -14,7 +24,10 @@ def collect_server(server, rows=None):
         rows = client_for(server).list_inbounds()
     emails = {e.email: e for e in s.query(ClientEmail).join(Inbound, ClientEmail.inbound_id == Inbound.id)
               .filter(Inbound.server_id == server.id)}
-    day = dt.date.today().isoformat()
+    ln = local_now()
+    day, hour = ln.date().isoformat(), ln.strftime("%Y-%m-%dT%H")
+    line_of = {l.entry_inbound_id: l.id for l in s.query(Line).join(Inbound, Line.entry_inbound_id == Inbound.id)
+               .filter(Inbound.server_id == server.id)}
     touched = set()
     for row in rows:
         for st in row.get("clientStats") or []:
@@ -39,6 +52,15 @@ def collect_server(server, rows=None):
                 s.add(t)
             t.up_bytes += du
             t.down_bytes += dd
+            lid = line_of.get(ce.inbound_id)
+            h = s.query(TrafficHourly).filter_by(hour=hour, client_id=ce.client_id, server_id=server.id,
+                                                 line_id=lid).first()
+            if h is None:
+                h = TrafficHourly(hour=hour, client_id=ce.client_id, server_id=server.id, line_id=lid,
+                                  up_bytes=0, down_bytes=0)
+                s.add(h)
+            h.up_bytes += du
+            h.down_bytes += dd
             c = s.get(Client, ce.client_id)
             c.up_bytes = (c.up_bytes or 0) + du
             c.down_bytes = (c.down_bytes or 0) + dd

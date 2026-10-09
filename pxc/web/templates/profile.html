@@ -1,0 +1,19 @@
+{% extends "base.html" %}{% block h1 %}{{ '方案 · ' ~ p.name if p.id else '新增分流方案' }}{% endblock %}{% block body %}
+<form method="post" class="f card">
+  <div class="row"><label class="l">名称</label><div><input type="text" name="name" value="{{ p.name or '' }}" placeholder="标准分流"></div></div>
+  <div class="row"><label class="l">规则（从上到下，命中即停）</label><div id="items">
+    {% for it in items + [{}] %}<div class="it" style="display:flex;gap:8px;margin-bottom:6px;max-width:520px">
+      <select name="ruleset_id"><option value="">（选择规则集）</option>{% for r in sets %}<option value="{{ r.id }}" {{ 'selected' if r.id == it.ruleset_id }}>{{ r.name }}（{{ r.count or 0 }}）</option>{% endfor %}</select>
+      <select name="policy" style="max-width:180px">{% for pl in policies %}<option {{ 'selected' if pl == it.policy }}>{{ pl }}</option>{% endfor %}{% if it.policy and it.policy not in policies %}<option value="{{ it.policy }}" selected>{{ it.policy }}（还没有这个线路组）</option>{% endif %}</select>
+      <button type="button" class="btn sm" onclick="mv(this,-1)">↑</button><button type="button" class="btn sm" onclick="mv(this,1)">↓</button>
+    </div>{% endfor %}
+    <button type="button" class="btn sm" onclick="add()">＋ 加一行</button>
+    <div class="help">策略写“直连 / 拦截 / 代理”或线路组名。用户没有这个线路组时自动落到他的默认代理组。规则集选空的那行保存时会被忽略。</div></div></div>
+  <div class="row"><label class="l">其余全部</label><div><select name="final_policy">{% for pl in policies %}<option {{ 'selected' if pl == p.final_policy }}>{{ pl }}</option>{% endfor %}{% if p.final_policy and p.final_policy not in policies %}<option value="{{ p.final_policy }}" selected>{{ p.final_policy }}（还没有这个线路组）</option>{% endif %}</select></div></div>
+  <div class="row"><span></span><div style="display:flex;gap:8px"><button class="btn p">保存</button><a class="btn" href="{{ url_for('admin.rules_home') }}">返回</a></div></div>
+</form>
+{% if p.id %}<form method="post" data-confirm="删除这个方案？"><input type="hidden" name="act" value="delete"><button class="btn d">删除方案</button></form>{% endif %}
+<script>
+function add(){var b=document.querySelector('#items .it:last-of-type'),n=b.cloneNode(true);n.querySelectorAll('select').forEach(function(s){s.selectedIndex=0});n.querySelectorAll('option').forEach(function(o){if(o.textContent.indexOf('还没有这个线路组')>0)o.remove()});b.after(n)}
+function mv(btn,d){var r=btn.closest('.it'),o=d<0?r.previousElementSibling:r.nextElementSibling;if(!o||!o.classList.contains('it'))return;d<0?o.before(r):o.after(r)}
+</script>{% endblock %}

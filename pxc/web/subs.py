@@ -127,12 +127,87 @@ def _find(snap, token=None, legacy=None):
     return None
 
 
-def public_sub_url(token):
+def public_base():
     cfg = get_config()
-    from ..models import get_setting
-    base = (get_setting("sub_public_url") if cfg.role == "console" else "") or cfg.sub_public_url or \
-        request.host_url.rstrip("/")
-    return base.rstrip("/") + "/s/" + token
+    base = ""
+    if cfg.role == "console":
+        from ..models import get_setting
+        base = get_setting("sub_public_url")
+    return (base or cfg.sub_public_url or request.host_url).rstrip("/")
+
+
+def public_sub_url(token):
+    return public_base() + "/s/" + token
+
+
+# ---------- 规则文件托管：/r/<id>.list（Clash / Surge）、/r/<id>.json（sing-box source） ----------
+
+def _ruleset_text(rid):
+    """控制台直接查库；订阅服务按快照里的 hash 从控制台取一次并缓存，控制台连不上用缓存。"""
+    cfg = get_config()
+    if provider.role == "console":
+        from ..models import Ruleset, Session
+        rs = Session().get(Ruleset, int(rid))
+        return rs.content if rs else None
+    meta = (provider.get().get("rulesets") or {}).get(str(rid))
+    if not meta:
+        return None
+    d = os.path.join(cfg.data_dir, "rulesets")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"{int(rid)}-{meta['hash']}.txt")
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read()
+    try:
+        r = requests.get(cfg.console_url.rstrip("/") + f"/internal/ruleset/{int(rid)}", timeout=20,
+                         headers={"Authorization": "Bearer " + cfg.sub_sync_token})
+        r.raise_for_status()
+        text = r.json()["content"]
+        for old in os.listdir(d):
+            if old.startswith(f"{int(rid)}-"):
+                os.remove(os.path.join(d, old))
+        with open(path, "w") as f:
+            f.write(text)
+        return text
+    except Exception:
+        olds = sorted(x for x in os.listdir(d) if x.startswith(f"{int(rid)}-"))
+        if olds:
+            with open(os.path.join(d, olds[-1])) as f:
+                return f.read()
+        return None
+
+
+@bp.route("/r/<int:rid>.<ext>")
+def ruleset_file(rid, ext):
+    if ext not in ("list", "json", "domain.txt", "ipcidr.txt"):
+        abort(404)
+    # 只给拿着订阅里地址（带内容 hash）的客户端，防止按编号遍历下载自定义规则
+    meta = (provider.get().get("rulesets") or {}).get(str(rid)) or {}
+    v = request.args.get("v", "")
+    if not v or v not in (meta.get("hash"), meta.get("prev_hash")):
+        abort(404)
+    text = _ruleset_text(rid)
+    if text is None:
+        abort(404)
+
+    key = (rid, ext, hash(text))
+    body = _rendered.get(key)
+    if body is None:            # 大规则集（十几万行）只在内容变化后渲染一次
+        class _R:
+            content = text
+        from .. import rules
+        if ext == "json":
+            body = rules.render_singbox_source(_R)
+        else:
+            body = rules.render_list(_R, ext.split(".")[0] if ext.endswith(".txt") else "classical")
+        for k in [k for k in _rendered if k[:2] == (rid, ext)]:
+            _rendered.pop(k, None)
+        _rendered[key] = body
+    ctype = "application/json; charset=utf-8" if ext == "json" else "text/plain; charset=utf-8"
+    return Response(body, content_type=ctype, headers={"Cache-Control": "public, max-age=3600"})
+
+
+_rendered = {}
 
 
 def serve(c, snap):
@@ -148,7 +223,7 @@ def serve(c, snap):
                                links=subgen.import_links(url, settings.get("site_name", "订阅")),
                                qr=subgen.qr_svg(url), hb=subgen.human_bytes)
     record_access(c, fmt)
-    body, ctype = subgen.render(snap, c, fmt, nodes_only=request.args.get("nodes") == "1")
+    body, ctype = subgen.render(snap, c, fmt, nodes_only=request.args.get("nodes") == "1", base_url=public_base())
     resp = Response(body, content_type=ctype)
     resp.headers["subscription-userinfo"] = subgen.userinfo_header(c)
     resp.headers["profile-update-interval"] = str(settings.get("sub_update_hours", 12))

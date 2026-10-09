@@ -304,6 +304,17 @@ def snapshot():
     return jsonify(build_snapshot())
 
 
+@internal.get("/internal/ruleset/<int:rid>")
+def ruleset_raw(rid):
+    h = request.headers.get("Authorization", "")
+    nodes = json.loads(get_setting("sub_nodes", "[]") or "[]")
+    if not h.startswith("Bearer ") or auth.sha(h[7:].strip()) not in {n["hash"] for n in nodes}:
+        abort(404)
+    from ..models import Ruleset
+    rs = Session().get(Ruleset, rid) or abort(404)
+    return jsonify({"content": rs.content or "", "hash": rs.hash, "version": rs.version})
+
+
 def _use_token(tok, purpose, consume=False):
     s = Session()
     row = s.get(OneTimeToken, auth.sha(tok))

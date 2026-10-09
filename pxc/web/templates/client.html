@@ -24,6 +24,10 @@
     </div></div></div>
 <div class="card"><h2>可用线路（{{ lines|length }}）</h2>
 {% for l in lines %}<span class="tag">{{ l.name }}</span> {% else %}<span class="muted">没有线路：请给他选套餐，或在编辑里“额外加的线路”。</span>{% endfor %}</div>
-<div class="card"><h2>近 30 天流量</h2><div class="tbl"><table><thead><tr><th>日期</th><th>流量</th></tr></thead><tbody>
-{% for d, b in by_day %}<tr><td>{{ d }}</td><td>{{ hb(b) }}</td></tr>{% else %}<tr><td colspan="2" class="muted">暂无</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><h2>近 30 天每日流量</h2>
+  {% if fc is not none %}<p class="small {{ 'muted' if fc > 7 else '' }}" style="{{ '' if fc > 7 else 'color:var(--warn)' }}">按近 7 天日均，{{ '本周期流量已用完' if fc == 0 else '大约 ' ~ fc ~ ' 天后用完本周期流量' }}</p>{% endif %}
+  {{ bars_svg|safe }}
+  <details style="margin-top:8px"><summary class="muted small">表格</summary><div class="tbl" style="margin-top:6px"><table><thead><tr><th>日期</th><th>流量</th></tr></thead><tbody>
+  {% for d, b in by_day %}<tr><td>{{ d }}</td><td>{{ hb(b) }}</td></tr>{% else %}<tr><td colspan="2" class="muted">暂无</td></tr>{% endfor %}</tbody></table></div></details>
+</div>
 {% endblock %}

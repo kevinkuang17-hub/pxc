@@ -57,6 +57,8 @@ class Server(Base, JsonMixin):
     last_diff_json = Column(Text, default="")
     fail_streak = Column(Integer, default=0)
     absorbed_json = Column(Text, default="")           # 导入时吸收的原模板出站 tag，首次接管时清理
+    dns_zone_id = Column(String(64), default="")       # 控制台在 Cloudflare 上管理的节点域名记录
+    dns_record_id = Column(String(64), default="")
     note = Column(Text, default="")
     created_at = Column(DateTime, default=now)
 
@@ -95,6 +97,9 @@ class Inbound(Base, JsonMixin):
     ss_key = Column(Text, default="")                  # 加密
     advanced_json = Column(Text, default="")           # 高级：覆盖 settings/streamSettings 的 JSON
     remote_id = Column(Integer)                        # 3X-UI 里的入站 id（读回时更新）
+    cert_days = Column(Integer)                        # 实测证书剩余天数（TLS 入站）
+    reality_ok = Column(Boolean)                       # 伪装目标是否可达且支持 TLS1.3 + h2
+    health_note = Column(Text, default="")
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=now)
 
@@ -149,6 +154,11 @@ class Line(Base):
     weight = Column(Integer, default=100)
     enabled = Column(Boolean, default=True)
     retiring_at = Column(DateTime)                           # 计划下线：订阅里标“即将下线”
+    auto_down = Column(Boolean, default=False)               # 连续探测失败被自动摘除
+    fail_streak = Column(Integer, default=0)
+    latency_ms = Column(Integer)
+    last_probe_at = Column(DateTime)
+    probe_error = Column(Text, default="")
 
     entry = relationship("Inbound")
     outbound = relationship("Outbound")
@@ -182,7 +192,9 @@ class Plan(Base):
     duration_days = Column(Integer, default=30)
     reset_cycle = Column(String(10), default="none")     # none | monthly
     device_limit = Column(Integer, default=0)
+    rule_profile_id = Column(Integer, ForeignKey("px_rule_profile.id"))
     groups = relationship("PlanGroup", cascade="all, delete-orphan")
+    rule_profile = relationship("RuleProfile")
 
 
 class PlanGroup(Base):
@@ -215,6 +227,10 @@ class Client(Base):
     last_sub_ip = Column(String(64), default="")
     crm_ref = Column(String(64), default="")
     note = Column(Text, default="")
+    rule_profile_id = Column(Integer, ForeignKey("px_rule_profile.id"))   # 空 = 用套餐的方案
+    rule_toggles = Column(Text, default="")              # JSON：ai_us / media / adblock / office_direct
+    custom_direct = Column(Text, default="")             # 自定义直连域名（换行分隔）
+    custom_proxy = Column(Text, default="")              # 自定义代理域名
     notified_flags = Column(String(64), default="")      # 已发过的 webhook（80/100/expiring）
     created_at = Column(DateTime, default=now)
 
@@ -261,6 +277,70 @@ class ClientEmail(Base):
     email = Column(String(128), nullable=False)
 
 
+# ---------------- 分流规则（F15） ----------------
+
+class Ruleset(Base):
+    __tablename__ = "px_ruleset"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), unique=True, nullable=False)   # AI 服务 / 流媒体 / 国内域名 …
+    source = Column(String(10), default="inline")           # inline | remote
+    url = Column(Text, default="")
+    content = Column(Text, default="")                       # 规范化后的规则（每行 TYPE,VALUE）
+    prev_content = Column(Text, default="")                  # 上一版本，可一键回退
+    pending_content = Column(Text, default="")               # 上游变化超过 20%，等人工确认
+    count = Column(Integer, default=0)
+    version = Column(Integer, default=1)
+    hash = Column(String(16), default="")
+    prev_hash = Column(String(16), default="")               # 上一版的 hash：客户端还没刷新订阅时也能取到
+    update_hours = Column(Integer, default=24)
+    last_fetched_at = Column(DateTime)
+    last_error = Column(Text, default="")
+
+
+class RuleProfile(Base):
+    __tablename__ = "px_rule_profile"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), unique=True, nullable=False)   # 标准分流 / AI 专用 / 全局代理
+    items = Column(Text, default="[]")                       # 有序 [{"ruleset_id":1,"policy":"代理"}]
+    final_policy = Column(String(64), default="代理")
+    version = Column(Integer, default=1)
+
+
+# ---------------- Cloudflare（F16） ----------------
+
+class CfAccount(Base):
+    __tablename__ = "px_cf_account"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), unique=True, nullable=False)
+    token = Column(Text, default="")                         # 加密
+    zones = Column(Text, default="[]")                       # [{"id":..,"name":..}]
+    verified_at = Column(DateTime)
+    last_error = Column(Text, default="")
+
+
+class CheckResult(Base):
+    """一致性核对 / 监控的最新结果（每个对象每项一行，覆盖更新）。"""
+    __tablename__ = "px_check"
+    id = Column(Integer, primary_key=True)
+    target = Column(String(64), index=True)                  # line:3 / server:2 / inbound:5 / sub
+    kind = Column(String(32))                                # dns / cert / sni / proxied / ssl_mode / reality
+    ok = Column(Boolean, default=True)
+    detail = Column(Text, default="")
+    fix = Column(String(32), default="")                     # 可一键修复的动作
+    checked_at = Column(DateTime, default=lambda: now())
+    __table_args__ = (UniqueConstraint("target", "kind"),)
+
+
+class ProbeLog(Base):
+    __tablename__ = "px_probe_log"
+    id = Column(Integer, primary_key=True)
+    line_id = Column(Integer, index=True)
+    ok = Column(Boolean)
+    latency_ms = Column(Integer)
+    error = Column(String(255), default="")
+    at = Column(DateTime, default=lambda: now(), index=True)
+
+
 # ---------------- 流量 ----------------
 
 class Traffic(Base):
@@ -273,6 +353,18 @@ class Traffic(Base):
     up_bytes = Column(BigInteger, default=0)
     down_bytes = Column(BigInteger, default=0)
     __table_args__ = (UniqueConstraint("client_id", "server_id", "inbound_id", "day"),)
+
+
+class TrafficHourly(Base):
+    __tablename__ = "px_traffic_hourly"
+    id = Column(Integer, primary_key=True)
+    hour = Column(String(13), index=True)                # 2026-10-10T08（北京时间）
+    client_id = Column(Integer, index=True)
+    server_id = Column(Integer)
+    line_id = Column(Integer)
+    up_bytes = Column(BigInteger, default=0)
+    down_bytes = Column(BigInteger, default=0)
+    __table_args__ = (UniqueConstraint("hour", "client_id", "server_id", "line_id"),)
 
 
 class TrafficCounter(Base):
@@ -416,7 +508,37 @@ def init_engine(url=None):
     Session.remove()
     Session.configure(bind=_engine)
     Base.metadata.create_all(_engine)
+    auto_migrate(_engine)
     return _engine
+
+
+def auto_migrate(engine):
+    """升级时自动给旧表补新列（SQLite / PostgreSQL 都支持 ADD COLUMN）。"""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        have = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in have:
+                continue
+            ctype = col.type.compile(engine.dialect)
+            default = ""
+            if col.default is not None and not callable(getattr(col.default, "arg", None)):
+                v = col.default.arg
+                if isinstance(v, bool):
+                    default = f" DEFAULT {1 if v else 0}" if engine.dialect.name == "sqlite" else \
+                        f" DEFAULT {'true' if v else 'false'}"
+                elif isinstance(v, (int, float)):
+                    default = f" DEFAULT {v}"
+                elif isinstance(v, str):
+                    default = " DEFAULT '" + v.replace("'", "''") + "'"
+            # 每列单独事务：控制台 / worker 同时启动时另一个进程可能已经加上了这一列
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}{default}'))
+            except Exception:
+                if col.name not in {c["name"] for c in inspect(engine).get_columns(table.name)}:
+                    raise
 
 
 def get_setting(key, default=""):

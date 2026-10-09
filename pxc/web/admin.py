@@ -341,7 +341,11 @@ def server_detail(sid):
     inbs = s.query(Inbound).filter_by(server_id=sid).order_by(Inbound.port).all()
     notes = json.loads(srv.last_diff_json or "[]") if srv.last_diff_json else []
     errs = validate_server(srv)
-    return render_template("server.html", srv=srv, jobs=jobs, inbs=inbs, notes=notes, verrs=errs)
+    from .. import reports
+    from . import charts
+    tr = reports.daily_totals(30, server_id=sid)
+    return render_template("server.html", srv=srv, jobs=jobs, inbs=inbs, notes=notes, verrs=errs,
+                           trend_svg=charts.trend(tr) if any(u or d for _, u, d in tr) else "")
 
 
 @bp.route("/servers/<int:sid>/action", methods=["POST"])
@@ -568,7 +572,11 @@ def client_detail(cid):
     by_day = {}
     for t in days:
         by_day[t.day] = by_day.get(t.day, 0) + t.up_bytes + t.down_bytes
+    from .. import reports
+    from . import charts
+    tr = reports.daily_totals(30, client_id=cid)
     return render_template("client.html", c=c, url=url, qr=qr_svg(url), lines=lines,
+                           bars_svg=charts.bars([(d, u + dn) for d, u, dn in tr]), fc=reports.forecast(c),
                            links=import_links(url, get_setting("site_name", "订阅")),
                            by_day=sorted(by_day.items(), reverse=True)[:30])
 
@@ -687,7 +695,7 @@ def audit_log():
 # ======================= 设置 =======================
 
 SETTING_KEYS = ["site_name", "login_slogan", "footer_text", "theme_color", "sub_public_url", "sub_update_hours",
-                "webhook_url", "tg_bot_token", "tg_chat_id", "admin_ip_allowlist", "allow_trusted_device"]
+                "webhook_url", "tg_bot_token", "tg_chat_id", "admin_ip_allowlist", "allow_trusted_device", "tz_offset"]
 
 
 @bp.route("/settings", methods=["GET", "POST"])

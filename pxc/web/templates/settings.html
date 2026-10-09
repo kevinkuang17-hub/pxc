@@ -13,6 +13,7 @@
 </div>
 <div class="card"><h2>订阅</h2>
   <div class="row"><label class="l">订阅对外地址</label><div><input type="text" name="sub_public_url" value="{{ v.sub_public_url }}" placeholder="https://clbstar.vertex-astra.com"><div class="help">用户订阅链接的前缀，指向独立订阅服务（Cloudflare 小黄云）</div></div></div>
+  <div class="row"><label class="l">报表时区（UTC+）</label><div><input type="number" step="0.5" name="tz_offset" value="{{ v.tz_offset or 8 }}"><div class="help">按这个时区切分“今天 / 每小时”，默认 8（北京时间）</div></div></div>
   <div class="row"><label class="l">建议刷新间隔（小时）</label><div><input type="number" name="sub_update_hours" value="{{ v.sub_update_hours or 12 }}"></div></div>
 </div>
 <div class="card"><h2>通知</h2>

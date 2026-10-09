@@ -7,25 +7,29 @@
 <style>:root{--c:{{ theme }}}</style>
 </head><body>
 {% set ep = request.endpoint or '' %}
-{% set res = request.view_args.get('res') if request.view_args else None %}
+{% set nav_res = request.view_args.get('res') if request.view_args else None %}
 <div class="layout">
 <aside class="side">
   <div class="brand">{% if brand.logo %}<img src="{{ url_for('admin.static_brand', name=brand.logo) }}" alt="">{% endif %}{{ site_name }}</div>
   <nav>
     <a href="{{ url_for('admin.dash') }}" class="{{ 'on' if ep=='admin.dash' }}">概览</a>
     <div class="sec">节点</div>
-    <a href="{{ url_for('admin.r_list', res='servers') }}" class="{{ 'on' if res=='servers' or ep.startswith('admin.server') }}">服务器</a>
-    <a href="{{ url_for('admin.r_list', res='inbounds') }}" class="{{ 'on' if res=='inbounds' }}">入站与落地</a>
-    <a href="{{ url_for('admin.r_list', res='outbounds') }}" class="{{ 'on' if res=='outbounds' or ep=='admin.quick_exit' }}">出站</a>
-    <a href="{{ url_for('admin.r_list', res='rules') }}" class="{{ 'on' if res=='rules' }}">路由规则</a>
+    <a href="{{ url_for('admin.r_list', res='servers') }}" class="{{ 'on' if nav_res=='servers' or ep.startswith('admin.server') }}">服务器</a>
+    <a href="{{ url_for('admin.r_list', res='inbounds') }}" class="{{ 'on' if nav_res=='inbounds' }}">入站与落地</a>
+    <a href="{{ url_for('admin.r_list', res='outbounds') }}" class="{{ 'on' if nav_res=='outbounds' or ep=='admin.quick_exit' }}">出站</a>
+    <a href="{{ url_for('admin.r_list', res='rules') }}" class="{{ 'on' if nav_res=='rules' }}">路由规则</a>
     <div class="sec">线路与用户</div>
-    <a href="{{ url_for('admin.r_list', res='lines') }}" class="{{ 'on' if res=='lines' or ep=='admin.quick_line' }}">线路</a>
-    <a href="{{ url_for('admin.r_list', res='groups') }}" class="{{ 'on' if res=='groups' }}">线路组</a>
-    <a href="{{ url_for('admin.r_list', res='plans') }}" class="{{ 'on' if res=='plans' }}">套餐</a>
-    <a href="{{ url_for('admin.r_list', res='clients') }}" class="{{ 'on' if res=='clients' or ep.startswith('admin.client') }}">用户</a>
+    <a href="{{ url_for('admin.r_list', res='lines') }}" class="{{ 'on' if nav_res=='lines' or ep=='admin.quick_line' }}">线路</a>
+    <a href="{{ url_for('admin.r_list', res='groups') }}" class="{{ 'on' if nav_res=='groups' }}">线路组</a>
+    <a href="{{ url_for('admin.r_list', res='plans') }}" class="{{ 'on' if nav_res=='plans' }}">套餐</a>
+    <a href="{{ url_for('admin.r_list', res='clients') }}" class="{{ 'on' if nav_res=='clients' or ep.startswith('admin.client') }}">用户</a>
+    <a href="{{ url_for('admin.rules_home') }}" class="{{ 'on' if ep.startswith('admin.rule') or ep=='admin.profile_edit' }}">分流规则</a>
     <div class="sec">运维</div>
+    <a href="{{ url_for('admin.health') }}" class="{{ 'on' if ep=='admin.health' }}">监控与核对</a>
+    <a href="{{ url_for('admin.report_home') }}" class="{{ 'on' if ep.startswith('admin.report') }}">流量报表</a>
     <a href="{{ url_for('admin.jobs') }}" class="{{ 'on' if ep=='admin.jobs' }}">推送任务</a>
     <a href="{{ url_for('admin.audit_log') }}" class="{{ 'on' if ep=='admin.audit_log' }}">操作日志</a>
+    <a href="{{ url_for('admin.cf_accounts') }}" class="{{ 'on' if ep=='admin.cf_accounts' }}">Cloudflare</a>
     <a href="{{ url_for('admin.settings') }}" class="{{ 'on' if ep=='admin.settings' }}">外观与通知</a>
     <a href="{{ url_for('admin.security') }}" class="{{ 'on' if ep=='admin.security' }}">安全与对接</a>
   </nav>
@@ -52,6 +56,10 @@
 {% endif %}{% endwith %}
 <script>
 document.addEventListener('submit',function(e){var f=e.target;if(f.dataset.confirm&&!confirm(f.dataset.confirm)){e.preventDefault()}});
+(function(){var t=document.createElement('div');t.className='tip';document.body.appendChild(t);
+document.addEventListener('pointermove',function(e){var el=e.target.closest&&e.target.closest('[data-tip]');
+if(!el){t.style.display='none';return}t.textContent=el.getAttribute('data-tip');t.style.display='block';
+var x=e.clientX+14,y=e.clientY+14;if(x+t.offsetWidth>innerWidth-8)x=e.clientX-t.offsetWidth-14;t.style.left=x+'px';t.style.top=y+'px'})})();
 function copyText(id,btn){navigator.clipboard.writeText(document.getElementById(id).innerText);btn.textContent='已复制';setTimeout(function(){btn.textContent='复制'},1500)}
 </script>
 </body></html>

@@ -8,6 +8,7 @@ import datetime as dt
 import logging
 import os
 import shutil
+import threading
 import time
 import traceback
 
@@ -52,28 +53,56 @@ def check_new_version():
         pass
 
 
+def _safe(fn):
+    """单项后台任务出错不影响其它任务。"""
+    try:
+        return fn()
+    except Exception:
+        log.error("%s failed:\n%s", fn.__name__, traceback.format_exc())
+        Session.rollback()
+
+
+def _hourly(cloudflare, monitor, rules):
+    try:
+        _safe(monitor.check_reality_targets)
+        _safe(cloudflare.check_all)
+        _safe(rules.refresh_due)
+    finally:
+        Session.remove()
+
+
 def tick(state, t):
-    from . import events, sync, traffic
+    from . import cloudflare, events, monitor, reports, rules, sync, traffic
     if t - state.get("jobs", 0) >= 2:
         state["jobs"] = t
-        sync.run_due_jobs()
+        _safe(sync.run_due_jobs)
     if t - state.get("minute", 0) >= 60:
         state["minute"] = t
-        s = Session()
-        for srv in s.query(Server).all():
-            if not srv.maintenance:
-                sync.refresh_status(srv)
-        traffic.collect_all()
-        events.deliver_pending()
+        def refresh_all():
+            for srv in Session().query(Server).all():
+                if not srv.maintenance:
+                    sync.refresh_status(srv)
+        _safe(refresh_all)
+        _safe(traffic.collect_all)
+        _safe(monitor.probe_lines)
+        _safe(events.deliver_pending)
+    if t - state.get("hourly", 0) >= 3600 and not (state.get("hourly_thread") and state["hourly_thread"].is_alive()):
+        state["hourly"] = t
+        # DNS / 证书 / Cloudflare / 拉规则都可能慢，放到单独线程，不耽误 2 秒一次的推送任务
+        th = threading.Thread(target=_hourly, args=(cloudflare, monitor, rules), daemon=True)
+        state["hourly_thread"] = th
+        th.start()
     if t - state.get("reconcile", 0) >= 300:
         state["reconcile"] = t
-        rep = sync.reconcile_all()
+        rep = _safe(sync.reconcile_all)
         log.info("reconcile %s", rep)
     day = dt.date.today().isoformat()
     if state.get("day") != day:
         state["day"] = day
-        backup_db()
-        check_new_version()
+        _safe(backup_db)
+        _safe(check_new_version)
+        _safe(monitor.prune)
+        _safe(reports.prune_hourly)
         Session().query(AuditLog).filter(AuditLog.created_at < now() - dt.timedelta(days=180)).delete()
         Session().commit()
 
@@ -81,7 +110,10 @@ def tick(state, t):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     init_engine()
-    state = {"reconcile": time.time() - 240}   # 启动 1 分钟后做第一次比对
+    from .rules import seed_defaults
+    _safe(seed_defaults)                         # 首次运行建好常用规则集和方案（不覆盖已有的）
+    state = {"reconcile": time.time() - 240,     # 启动 1 分钟后做第一次比对
+             "hourly": time.time() - 3540}       # 启动 1 分钟后做第一次核对 / 拉规则
     log.info("worker started")
     while True:
         try:

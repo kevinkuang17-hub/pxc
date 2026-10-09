@@ -17,6 +17,11 @@
     <select id="f_{{ f.name }}" name="{{ f.name }}">
     {% for k, label in f.choices() %}<option value="{{ k }}" {% if k|string == val|string %}selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
+  {% elif f.type == 'multi' and f.get('str') %}
+    {% set chosen = val|map('string')|list %}
+    <div style="display:flex;flex-wrap:wrap;gap:6px 18px;padding-top:6px">
+    {% for k, label in f.choices() %}<label><input type="checkbox" name="{{ f.name }}" value="{{ k }}" {% if k in chosen %}checked{% endif %}> {{ label }}</label>{% endfor %}
+    </div>
   {% elif f.type == 'multi' %}
     {% set chosen = val|map('string')|list %}
     <select id="f_{{ f.name }}" name="{{ f.name }}" multiple>

@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block h1 %}{{ '规则集 · ' ~ rs.name if rs.id else '新增规则集' }}{% endblock %}{% block body %}
+{% if rs.pending_content %}<div class="card" style="border-color:var(--warn)"><h2>上游变化过大，已暂停发布</h2><p>{{ rs.last_error }}</p>
+<div style="display:flex;gap:8px"><form method="post"><input type="hidden" name="act" value="approve"><button class="btn p">确认并发布新内容</button></form>
+<span class="muted small" style="align-self:center">不确认就继续用旧内容。</span></div></div>{% elif rs.last_error %}<div class="card" style="border-color:var(--err)"><p style="color:var(--err);margin:0">{{ rs.last_error }}</p></div>{% endif %}
+<form method="post" class="f card"><input type="hidden" name="act" value="save">
+  <div class="row"><label class="l">名称</label><div><input type="text" name="name" value="{{ rs.name or '' }}" placeholder="AI 服务"></div></div>
+  <div class="row"><label class="l">来源</label><div><select name="source" onchange="document.querySelectorAll('.src').forEach(e=>e.style.display=e.dataset.s==this.value?'':'none')">
+    <option value="inline" {{ 'selected' if rs.source=='inline' }}>自己维护</option><option value="remote" {{ 'selected' if rs.source=='remote' }}>远程规则库（定时拉取）</option></select></div></div>
+  <div class="row src" data-s="remote" {% if rs.source!='remote' %}style="display:none"{% endif %}><label class="l">地址</label><div><input type="text" name="url" value="{{ rs.url or '' }}" placeholder="https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/openai.list">
+    <div class="help">支持 Clash classical / payload、域名列表（+.x）、v2fly（domain: / full:）、Surge、纯 IP 段。变化超过 20% 会先暂停等你确认。</div></div></div>
+  <div class="row src" data-s="remote" {% if rs.source!='remote' %}style="display:none"{% endif %}><label class="l">拉取间隔（小时）</label><div><input type="number" name="update_hours" value="{{ rs.update_hours or 24 }}"></div></div>
+  <div class="row src" data-s="inline" {% if rs.source=='remote' %}style="display:none"{% endif %}><label class="l">规则</label><div><textarea name="content" style="min-height:200px" placeholder="openai.com&#10;DOMAIN-KEYWORD,claude&#10;1.2.3.0/24">{{ rs.content or '' }}</textarea>
+    <div class="help">每行一条：域名（含子域名）、DOMAIN / DOMAIN-SUFFIX / DOMAIN-KEYWORD / IP-CIDR。保存时自动规范化、去重。</div></div></div>
+  <div class="row"><span></span><div style="display:flex;gap:8px"><button class="btn p">保存</button><a class="btn" href="{{ url_for('admin.rules_home') }}">返回</a></div></div>
+</form>
+{% if rs.id %}
+<div class="toolbar">
+  {% if rs.source == 'remote' %}<form method="post"><input type="hidden" name="act" value="fetch"><button class="btn">立即拉取</button></form>{% endif %}
+  {% if rs.prev_content %}<form method="post" data-confirm="回退到上一版本？"><input type="hidden" name="act" value="rollback"><button class="btn">回退到上一版本</button></form>{% endif %}
+  <form method="post" data-confirm="删除这个规则集？"><input type="hidden" name="act" value="delete"><button class="btn d">删除</button></form>
+  <span class="sp"></span><span class="muted small">v{{ rs.version }} · {{ rs.count or 0 }} 条 · 客户端从订阅里自动拿到规则地址（/r/{{ rs.id }}.*?v={{ rs.hash }}）</span>
+</div>
+{% if preview %}<div class="card"><h2>内容预览（前 200 条）</h2><pre style="max-height:320px">{{ preview|join('\n') }}</pre></div>{% endif %}
+{% endif %}{% endblock %}

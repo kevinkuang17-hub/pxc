@@ -75,6 +75,11 @@ requests.post(f"{API}/clients/{c['id']}/renew", headers=H, json={"days": 30})
 | `push_failed` | 某台服务器连续推送失败 |
 | `push_rollback` | 推送后 Xray 起不来，已自动回滚 |
 | `login_new_ip` | 控制台后台有新 IP 登录 |
+| `line_down` / `line_up` | 线路连续 3 次探测失败（已从订阅摘除）/ 恢复（同一台服务器的线路合并成一条） |
+| `probe_suppressed` | 大部分线路同时失败，判断为控制台网络问题，暂停自动摘除 |
+| `reality_target` | Reality 伪装目标不可用（不可达 / 非 TLS1.3 / 不支持 h2） |
+| `consistency` | 域名解析 / 证书 / SNI / 小黄云核对出现新的不一致 |
+| `ruleset_review` | 远程规则集变化超过 20%，等待在后台确认 |
 
 ```json
 {"event": "traffic_80", "id": 12, "at": "2026-10-10T02:00:00Z",

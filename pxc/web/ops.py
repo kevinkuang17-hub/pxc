@@ -1,0 +1,299 @@
+"""v0.2 后台页面：Cloudflare、监控与核对、分流规则、流量报表。挂在同一个后台蓝图下。"""
+import csv
+import io
+import json
+
+from flask import Response, abort, flash, g, redirect, render_template, request, url_for
+
+from .. import cloudflare as cfmod
+from .. import crypto, monitor, reports, rules
+from ..models import (CfAccount, CheckResult, Client, Inbound, Line, RuleProfile, Ruleset, Server, Session, audit,
+                      get_setting, set_setting)
+from . import charts
+from .admin import bp, changed, sensitive
+
+
+# ======================= Cloudflare =======================
+
+@bp.route("/cloudflare", methods=["GET", "POST"])
+def cf_accounts():
+    s = Session()
+    if request.method == "POST":
+        act = request.form.get("act")
+        if act == "add":
+            name, token = request.form.get("name", "").strip(), request.form.get("token", "").strip()
+            if not name or not token:
+                flash("请填写名称和 API 令牌", "error")
+            elif len(token) == 37 and token.isalnum() and token.islower():
+                flash("这看起来是 Global API Key。请改用限定权限的 API 令牌（Zone:Read + DNS:Edit）", "error")
+            else:
+                acc = CfAccount(name=name, token=crypto.enc(token))
+                s.add(acc)
+                s.flush()
+                try:
+                    zones = cfmod.verify_account(acc)
+                    audit("cf.add", name, after=[z["name"] for z in zones], operator=g.admin.username)
+                    flash(f"已添加，这个令牌能管理：{', '.join(z['name'] for z in zones) or '（没有域名）'}", "ok")
+                except cfmod.CfError as e:
+                    s.delete(acc)          # verify_account 已经 commit 过，rollback 删不掉这条无效账号
+                    s.commit()
+                    flash(f"{e}。请确认令牌有 Zone:Read 和 DNS:Edit 权限。", "error")
+        elif act == "verify":
+            acc = s.get(CfAccount, int(request.form["id"]))
+            try:
+                zones = cfmod.verify_account(acc)
+                flash(f"令牌有效，可管理：{', '.join(z['name'] for z in zones)}", "ok")
+            except cfmod.CfError as e:
+                flash(str(e), "error")
+        elif act == "delete":
+            r = sensitive()
+            if r:
+                return r
+            acc = s.get(CfAccount, int(request.form["id"]))
+            s.delete(acc)
+            s.commit()
+            audit("cf.delete", acc.name, operator=g.admin.username)
+            flash("已删除（Cloudflare 上的解析记录不会被删除）", "ok")
+        return redirect(url_for("admin.cf_accounts"))
+    accs = s.query(CfAccount).order_by(CfAccount.name).all()
+    return render_template("cloudflare.html", accs=accs, zones={a.id: json.loads(a.zones or "[]") for a in accs})
+
+
+@bp.route("/servers/<int:sid>/dns", methods=["POST"])
+def server_dns(sid):
+    s = Session()
+    srv = s.get(Server, sid) or abort(404)
+    act = request.form.get("act")
+    try:
+        if act == "change_ip":
+            ip = request.form.get("ip", "").strip()
+            import ipaddress
+            ipaddress.ip_address(ip)
+            msg = cfmod.change_ip(srv, ip)
+            changed(f"{srv.name} 换 IP")
+            flash(msg + "。节点用的是域名，用户不用刷新订阅（DNS TTL 60 秒）。", "ok")
+        else:
+            flash(cfmod.ensure_node_record(srv, adopt=(act == "adopt")), "ok")
+    except ValueError:
+        flash("IP 格式不对", "error")
+    except cfmod.CfError as e:
+        flash(str(e), "error")
+    return redirect(url_for("admin.server_detail", sid=sid))
+
+
+# ======================= 监控与一致性核对 =======================
+
+@bp.route("/health", methods=["GET", "POST"])
+def health():
+    s = Session()
+    if request.method == "POST":
+        act = request.form.get("act")
+        if act == "probe":
+            res = monitor.probe_lines()
+            monitor.check_reality_targets()
+            flash(f"已探测 {res['probed']} 条线路" + (f"；新摘除：{', '.join(res['down'])}" if res["down"] else "") +
+                  (f"；恢复：{', '.join(res['up'])}" if res["up"] else ""), "ok")
+        elif act == "check":
+            probs = cfmod.check_all()
+            flash(f"核对完成，{len(probs)} 个问题" if probs else "核对完成，全部一致", "warn" if probs else "ok")
+        elif act == "fix":
+            t, kind = request.form.get("target", ""), request.form.get("kind", "")
+            line = s.get(Line, int(t.split(":")[1])) if t.startswith("line:") else None
+            try:
+                if not line:
+                    abort(404)
+                srv = line.entry.server
+                if kind == "dns":
+                    flash(cfmod.ensure_node_record(srv), "ok")
+                elif kind == "proxied":
+                    cdn = bool(line.entry.client_address)
+                    cfmod.set_proxied(line.entry.client_address if cdn else srv.domain, cdn)
+                    flash("已修正小黄云状态", "ok")
+                cfmod.check_all()
+            except cfmod.CfError as e:
+                flash(str(e), "error")
+        elif act == "toggle_auto":
+            set_setting("auto_remove_lines", "0" if get_setting("auto_remove_lines", "1") == "1" else "1")
+        elif act == "restore":
+            line = s.get(Line, int(request.form["line_id"]))
+            line.auto_down, line.fail_streak = False, 0
+            s.commit()
+            audit("line.manual_up", line.name, operator=g.admin.username)
+            flash(f"{line.name} 已手动恢复到订阅", "ok")
+        if subs_provider():
+            subs_provider().invalidate()
+        return redirect(url_for("admin.health"))
+    lines = s.query(Line).order_by(Line.name).all()
+    checks = {}
+    for c in s.query(CheckResult).all():
+        checks.setdefault(c.target, []).append(c)
+    reality = s.query(Inbound).filter_by(security="reality").order_by(Inbound.tag).all()
+    bad = [c for c in s.query(CheckResult).filter_by(ok=False).all()]
+    return render_template("health.html", lines=lines, checks=checks, reality=reality, bad=bad,
+                           auto=get_setting("auto_remove_lines", "1") == "1",
+                           cf=s.query(CfAccount).count())
+
+
+def subs_provider():
+    from . import subs
+    return subs.provider
+
+
+# ======================= 分流规则 =======================
+
+@bp.route("/rules", methods=["GET", "POST"])
+def rules_home():
+    s = Session()
+    if request.method == "POST" and request.form.get("act") == "seed":
+        if rules.seed_defaults():
+            flash("已建好常用规则集和 3 个方案；远程规则集会在几分钟内自动拉取", "ok")
+        return redirect(url_for("admin.rules_home"))
+    used = {}
+    for p in s.query(RuleProfile):
+        for it in json.loads(p.items or "[]"):
+            used.setdefault(it.get("ruleset_id"), []).append(p.name)
+    return render_template("rules.html", sets=s.query(Ruleset).order_by(Ruleset.id).all(),
+                           profiles=s.query(RuleProfile).order_by(RuleProfile.id).all(), used=used)
+
+
+@bp.route("/rules/set/new", methods=["GET", "POST"])
+@bp.route("/rules/set/<int:rid>", methods=["GET", "POST"])
+def ruleset_edit(rid=None):
+    s = Session()
+    rs = s.get(Ruleset, rid) if rid else Ruleset(source="inline", update_hours=24)
+    if rid and rs is None:
+        abort(404)
+    if request.method == "POST":
+        act = request.form.get("act", "save")
+        if act == "save":
+            rs.name = request.form.get("name", "").strip()
+            rs.source = request.form.get("source", "inline")
+            rs.url = request.form.get("url", "").strip()
+            rs.update_hours = int(request.form.get("update_hours") or 24)
+            if not rs.name:
+                flash("请填写名称", "error")
+                return render_template("ruleset.html", rs=rs, preview=None)
+            if not rid:
+                s.add(rs)
+                s.flush()
+            if rs.source == "inline":
+                entries = rules.parse(request.form.get("content", ""))
+                rules.save_content(rs, entries)
+            s.commit()
+            if rs.source == "remote" and rs.url:
+                r = rules.fetch_remote(rs)
+                flash({"updated": "已拉取并发布", "same": "已拉取，内容没变", "pending": rs.last_error,
+                       "error": rs.last_error, "empty": rs.last_error}[r], "ok" if r in ("updated", "same") else "warn")
+            else:
+                flash(f"已保存，共 {rs.count} 条", "ok")
+        elif act == "fetch":
+            r = rules.fetch_remote(rs)
+            flash(rs.last_error or ("已更新" if r == "updated" else "内容没变"), "ok" if r in ("updated", "same") else "warn")
+        elif act == "approve":
+            rules.approve_pending(rs)
+            flash("已确认并发布上游的新内容", "ok")
+        elif act == "rollback":
+            flash("已回退到上一版本" if rules.rollback(rs) else "没有上一版本", "ok")
+        elif act == "delete":
+            used = [p.name for p in s.query(RuleProfile) if any(
+                it.get("ruleset_id") == rs.id for it in json.loads(p.items or "[]"))]
+            if used:
+                flash(f"方案 {', '.join(used)} 还在用它，请先从方案里去掉", "error")
+                return redirect(url_for("admin.ruleset_edit", rid=rs.id))
+            s.delete(rs)
+            s.commit()
+            flash("已删除", "ok")
+            return redirect(url_for("admin.rules_home"))
+        changed(f"规则集 {rs.name} 变化")
+        return redirect(url_for("admin.ruleset_edit", rid=rs.id))
+    preview = (rs.content or "").splitlines()[:200] if rs.id else None
+    return render_template("ruleset.html", rs=rs, preview=preview)
+
+
+@bp.route("/rules/profile/new", methods=["GET", "POST"])
+@bp.route("/rules/profile/<int:pid>", methods=["GET", "POST"])
+def profile_edit(pid=None):
+    s = Session()
+    p = s.get(RuleProfile, pid) if pid else RuleProfile(items="[]", final_policy=rules.PROXY)
+    if pid and p is None:
+        abort(404)
+    sets = s.query(Ruleset).order_by(Ruleset.name).all()
+    from ..models import LineGroup
+    groups = [x.name for x in s.query(LineGroup).order_by(LineGroup.sort_order)]
+    policies = [rules.DIRECT, rules.REJECT, rules.PROXY] + groups
+    if request.method == "POST":
+        if request.form.get("act") == "delete":
+            from ..models import Plan
+            if s.query(Plan).filter_by(rule_profile_id=p.id).count() or \
+                    s.query(Client).filter_by(rule_profile_id=p.id).count():
+                flash("还有套餐或用户在用这个方案", "error")
+                return redirect(url_for("admin.profile_edit", pid=p.id))
+            s.delete(p)
+            s.commit()
+            flash("已删除", "ok")
+            return redirect(url_for("admin.rules_home"))
+        p.name = request.form.get("name", "").strip()
+        rids, pols = request.form.getlist("ruleset_id"), request.form.getlist("policy")
+        p.items = json.dumps([{"ruleset_id": int(r), "policy": pl} for r, pl in zip(rids, pols) if r],
+                             ensure_ascii=False)
+        p.final_policy = request.form.get("final_policy") or rules.PROXY
+        p.version = (p.version or 0) + 1
+        if not p.name:
+            flash("请填写名称", "error")
+        else:
+            if not pid:
+                s.add(p)
+            try:
+                s.commit()
+            except Exception:
+                s.rollback()
+                flash("名称重复", "error")
+                return redirect(request.url)
+            audit("profile.save", p.name, after=p.items, operator=g.admin.username)
+            changed(f"分流方案 {p.name} 变化")
+            flash("已保存。客户端下次刷新订阅就会用上新规则。", "ok")
+            return redirect(url_for("admin.profile_edit", pid=p.id))
+    return render_template("profile.html", p=p, items=json.loads(p.items or "[]"), sets=sets, policies=policies)
+
+
+@bp.route("/rules/test", methods=["GET", "POST"])
+def rules_test():
+    s = Session()
+    res = None
+    clients = s.query(Client).order_by(Client.name).all()
+    if request.method == "POST":
+        c = s.get(Client, int(request.form["client_id"]))
+        steps, verdict, note, groups = rules.explain(c, request.form.get("domain", ""))
+        res = {"client": c, "domain": request.form.get("domain", ""), "steps": steps, "verdict": verdict,
+               "note": note, "groups": groups}
+    return render_template("rules_test.html", clients=clients, res=res)
+
+
+# ======================= 流量报表 =======================
+
+@bp.route("/reports")
+def report_home():
+    days = int(request.args.get("days", 30))
+    days = days if days in (7, 30, 90) else 30
+    ov = reports.overview()
+    trend = reports.daily_totals(days)
+    return render_template("reports.html", days=days, ov=ov, trend_svg=charts.trend(trend), trend=trend,
+                           heat_svg=charts.heatmap(reports.heatmap()),
+                           users=reports.ranking("client", days), servers=reports.ranking("server", days),
+                           lines=reports.ranking("line", days),
+                           total=sum(u + d for _, u, d in trend))
+
+
+@bp.route("/reports/export")
+def report_export():
+    r = sensitive()
+    if r:
+        return r
+    days = int(request.args.get("days", 30))
+    out = io.StringIO()
+    w = csv.writer(out)
+    for row in reports.csv_rows(min(days, 366)):
+        w.writerow(row)
+    audit("reports.export", f"{days}d", operator=g.admin.username)
+    return Response("﻿" + out.getvalue(), content_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename=traffic-{days}d.csv"})

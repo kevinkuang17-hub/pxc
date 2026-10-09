@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block h1 %}Cloudflare{% endblock %}{% block body %}
+<div class="card"><h2>账号</h2>
+<div class="tbl"><table><thead><tr><th>名称</th><th>可管理的域名</th><th>上次验证</th><th></th></tr></thead><tbody>
+{% for a in accs %}<tr><td>{{ a.name }}</td><td class="wrap">{% for z in zones[a.id] %}<span class="tag">{{ z.name }}</span> {% else %}<span class="muted">—</span>{% endfor %}
+{% if a.last_error %}<div class="small" style="color:var(--err)">{{ a.last_error }}</div>{% endif %}</td>
+<td>{{ fmt_dt(a.verified_at) }}</td>
+<td style="display:flex;gap:6px"><form method="post"><input type="hidden" name="act" value="verify"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm">重新验证</button></form>
+<form method="post" data-confirm="删除这个账号？Cloudflare 上已有的解析记录不会被删除。"><input type="hidden" name="act" value="delete"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm d">删除</button></form></td></tr>
+{% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">还没有添加 Cloudflare 账号</td></tr>{% endfor %}
+</tbody></table></div></div>
+<form method="post" class="f card"><h2>添加账号</h2><input type="hidden" name="act" value="add">
+  <div class="row"><label class="l">名称</label><div><input type="text" name="name" placeholder="主账号"></div></div>
+  <div class="row"><label class="l">API 令牌</label><div><input type="password" name="token" autocomplete="off">
+    <div class="help">Cloudflare 控制台 → 我的个人资料 → API 令牌 → 创建令牌 → “编辑区域 DNS”模板，区域资源选你的域名（如 startech.qzz.io、vertex-astra.com）。只需要 Zone:Read + DNS:Edit；不要用 Global API Key。令牌加密保存。</div></div></div>
+  <div class="row"><span></span><div><button class="btn p">验证并添加</button></div></div>
+</form>
+<div class="card muted small">控制台只修改自己创建的解析记录（备注带 pxc-managed）；你手动建的记录只读，冲突时会提示，需要点“接管”才会改。</div>
+{% endblock %}
