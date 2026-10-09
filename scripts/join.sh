@@ -31,6 +31,14 @@ if [ -n "${TS_KEY:-}" ]; then
   green "  Tailscale IP $TS_IP"
 fi
 
+# ---------- 已装过 3X-UI 的服务器：一律不动（不重装、不改端口账号、不碰它的数据库） ----------
+if [ -d /usr/local/x-ui ] && [ "${PXC_REUSE_XUI:-0}" != 1 ]; then
+  yellow "这台服务器已经装了 3X-UI，为了不覆盖现有数据，脚本不会重装、也不会改它的端口和账号。"
+  echo   "请在控制台「服务器 → 新增」手动添加：填这台现有面板的地址（含端口和路径）和账号密码，"
+  echo   "然后用「导入这台的配置」把现有入站和用户读进来。"
+  exit 0
+fi
+
 # ---------- 安装 3X-UI（单机模式，不接入任何主控） ----------
 step "安装 3X-UI"
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) die "不支持的架构 $(uname -m)";; esac

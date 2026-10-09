@@ -144,6 +144,10 @@ def _ov_set(action):
 # ---------- 保存前检查 ----------
 
 def server_check(obj, form):
+    obj.region = (obj.region or "").strip().upper()
+    if not obj.name:
+        from ..rules import next_letter_name
+        obj.name = next_letter_name(obj.region, [x.name for x in Session().query(Server) if x.id != obj.id])
     if form.get("skip_test"):
         return
     if not obj.panel_url:
@@ -288,7 +292,8 @@ RESOURCES = {
         "sensitive_delete": True,
         "cols": [("name", "名称"), ("region", "地区"), ("domain", "域名"), ("mode", "模式"), ("status", "状态")],
         "fields": [
-            F("name", "名称", required=True, help="如 HK D"), F("region", "地区代码", help="HK / JP / SG / US …"),
+            F("name", "名称", help="按“地区代码 + 字母”命名：HK A 是第一台，HK B 第二台…；留空按地区自动排下一个字母"),
+            F("region", "地区代码", required=True, help="HK / JP / SG / US …（大写两个字母）"),
             F("domain", "节点域名", help="订阅里用域名而不是 IP，换 IP 时只改解析"), F("ip", "IP"),
             F("panel_url", "面板地址", required=True, help="含端口和路径，如 http://100.64.0.5:23456/xyz（建议走 Tailscale 内网）"),
             F("auth_type", "认证方式", "select", choices=lambda: [("password", "面板账号密码"), ("token", "API 令牌")]),

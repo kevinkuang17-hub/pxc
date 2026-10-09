@@ -220,7 +220,8 @@ def profile_edit(pid=None):
     sets = s.query(Ruleset).order_by(Ruleset.name).all()
     from ..models import LineGroup
     groups = [x.name for x in s.query(LineGroup).order_by(LineGroup.sort_order)]
-    policies = [rules.DIRECT, rules.REJECT, rules.PROXY] + groups
+    regions = sorted({(x.region or "").upper() for x in s.query(Server) if x.region} | {"US", "HK", "JP", "SG"})
+    policies = [rules.DIRECT, rules.REJECT, rules.PROXY] + regions + [g for g in groups if g not in regions]
     if request.method == "POST":
         if request.form.get("act") == "delete":
             from ..models import Plan
@@ -253,7 +254,8 @@ def profile_edit(pid=None):
             changed(f"分流方案 {p.name} 变化")
             flash("已保存。客户端下次刷新订阅就会用上新规则。", "ok")
             return redirect(url_for("admin.profile_edit", pid=p.id))
-    return render_template("profile.html", p=p, items=json.loads(p.items or "[]"), sets=sets, policies=policies)
+    return render_template("profile.html", p=p, items=json.loads(p.items or "[]"), sets=sets, policies=policies,
+                           aliases=rules.REGION_ALIAS)
 
 
 @bp.route("/rules/test", methods=["GET", "POST"])

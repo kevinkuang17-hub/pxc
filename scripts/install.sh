@@ -66,10 +66,42 @@ UPGRADE=0
 [ -f "$ENV_FILE" ] && UPGRADE=1
 mkdir -p "$PXC_HOME/releases" "$PXC_ETC" "$PXC_DATA/backups"
 chmod 700 "$PXC_ETC" "$PXC_DATA"
-if [ "$UPGRADE" = 1 ] && [ -f "$PXC_DATA/pxc.db" ]; then
-  step "升级前备份数据库"
-  python3 -c 'import sqlite3,sys;a=sqlite3.connect(sys.argv[1]);b=sqlite3.connect(sys.argv[2]);a.backup(b);b.close()' \
-    "$PXC_DATA/pxc.db" "$PXC_DATA/backups/before-$VER-$(date +%Y%m%d%H%M%S).db"
+# 升级绝不覆盖原有数据：配置文件、数据库、加密密钥、品牌图片都不动，只换程序目录；
+# 升级前先停服务、整体备份，升级后核对关键数据条数，少了或起不来就自动还原并回到旧版本。
+count_rows(){
+  [ -f "$PXC_DATA/pxc.db" ] || { echo "-"; return; }
+  python3 - "$PXC_DATA/pxc.db" <<'PYEOF'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+out = []
+for t in ("px_admin", "px_server", "px_inbound", "px_outbound", "px_line", "px_line_group", "px_plan", "px_client",
+          "px_client_line_override", "px_route_rule", "px_traffic"):
+    try:
+        out.append(f"{t}={con.execute(f'select count(*) from {t}').fetchone()[0]}")
+    except sqlite3.Error:
+        pass
+print(" ".join(out))
+PYEOF
+}
+BK=""
+BEFORE="-"
+if [ "$UPGRADE" = 1 ]; then
+  step "升级前停止服务并完整备份"
+  systemctl stop pxc-web pxc-worker 2>/dev/null || true
+  BK="$PXC_DATA/backups/before-$VER-$(date +%Y%m%d%H%M%S)"
+  mkdir -p "$BK"
+  if [ -f "$PXC_DATA/pxc.db" ]; then
+    python3 -c 'import sqlite3,sys;a=sqlite3.connect(sys.argv[1]);b=sqlite3.connect(sys.argv[2]);a.backup(b);b.close()' \
+      "$PXC_DATA/pxc.db" "$BK/pxc.db"
+    cp "$BK/pxc.db" "$BK.db"          # 兼容 pxc rollback 找 before-*.db
+  fi
+  for f in secret.key session.key snapshot.json; do [ -f "$PXC_DATA/$f" ] && cp -a "$PXC_DATA/$f" "$BK/"; done
+  [ -d "$PXC_DATA/brand" ] && cp -a "$PXC_DATA/brand" "$BK/"
+  cp -a "$ENV_FILE" "$BK/pxc.env"
+  chmod -R go-rwx "$BK"
+  BEFORE=$(count_rows)
+  ls -1dt "$PXC_DATA"/backups/before-*/ 2>/dev/null | tail -n +11 | xargs -r rm -rf   # 升级备份保留最近 10 次
+  green "  已备份到 $BK"
 fi
 DEST="$PXC_HOME/releases/$VER-$(date +%Y%m%d%H%M%S)"
 mkdir -p "$DEST"
@@ -189,8 +221,32 @@ systemctl enable -q pxc-web
 systemctl restart pxc-web
 if [ "$PXC_ROLE" = console ]; then systemctl enable -q pxc-worker; systemctl restart pxc-worker; fi
 
-sleep 2
-systemctl is-active -q pxc-web || { journalctl -u pxc-web -n 30 --no-pager; die "启动失败，上面是日志"; }
+sleep 3
+OK=1
+systemctl is-active -q pxc-web || OK=0
+if [ "$UPGRADE" = 1 ] && [ "$BEFORE" != "-" ]; then
+  AFTER=$(count_rows)
+  for kv in $BEFORE; do
+    k=${kv%%=*}; b=${kv#*=}
+    a=$(echo " $AFTER " | grep -o " $k=[0-9]*" | cut -d= -f2)
+    if [ -z "$a" ] || [ "$a" -lt "$b" ]; then red "  数据核对不通过：$k 升级前 $b 条，升级后 ${a:-缺失}"; OK=0; fi
+  done
+  [ "$OK" = 1 ] && green "  数据核对通过（$AFTER）"
+fi
+if [ "$OK" != 1 ]; then
+  journalctl -u pxc-web -n 30 --no-pager 2>/dev/null || true
+  if [ "$UPGRADE" = 1 ] && [ -n "$BK" ] && [ -L "$PXC_HOME/previous" ]; then
+    red "升级失败，正在自动还原数据并回到旧版本…"
+    systemctl stop pxc-web pxc-worker 2>/dev/null || true
+    [ -f "$BK/pxc.db" ] && cp "$BK/pxc.db" "$PXC_DATA/pxc.db" && rm -f "$PXC_DATA/pxc.db-wal" "$PXC_DATA/pxc.db-shm"
+    for f in secret.key session.key; do [ -f "$BK/$f" ] && cp -a "$BK/$f" "$PXC_DATA/"; done
+    cp -a "$BK/pxc.env" "$ENV_FILE"
+    ln -sfn "$(readlink "$PXC_HOME/previous")" "$PXC_HOME/current"
+    systemctl restart pxc-web; [ "$PXC_ROLE" = console ] && systemctl restart pxc-worker
+    die "已还原到升级前的数据和版本，什么都没丢。请把上面的日志发给开发者。"
+  fi
+  die "启动失败，上面是日志"
+fi
 
 IP=$(curl -fsS4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 echo

@@ -22,10 +22,45 @@ CHANGE_LIMIT = 0.2
 # 需求开关：(键, 名称, [geosite 分类], 策略候选（按线路组名关键字依次找），默认是否开启)
 TOGGLES = [
     ("adblock", "广告拦截", ["category-ads-all"], [REJECT], True),
-    ("ai_us", "AI 服务走美国", ["openai", "anthropic", "google-gemini"], ["AI", "美国", "US"], True),
-    ("media", "流媒体走香港 / 新加坡", ["netflix", "youtube", "disney"], ["流媒体", "香港", "HK", "新加坡", "SG"], True),
+    ("ai_us", "AI 服务走 US", ["openai", "anthropic", "google-gemini"], ["AI", "US"], True),
+    ("media", "流媒体走 HK / SG", ["netflix", "youtube", "disney"], ["流媒体", "HK", "SG"], True),
     ("office_direct", "Teams / Office 直连", ["microsoft"], [DIRECT], False),
 ]
+
+# 命名约定：服务器 / 线路组用“地区代码 + 字母”，如 US A、HK A、JP A；A 是第一台，B 第二台，以此类推。
+# 策略里写地区代码（US / HK …，也认“美国 / 香港”这类中文旧写法），生成订阅时自动建一个地区组，
+# 里面按 A、B、C 顺序放这个用户拥有的同地区线路组（主备切换：A 不通才用 B）。
+REGION_ALIAS = {"美国": "US", "香港": "HK", "日本": "JP", "新加坡": "SG", "台湾": "TW", "韩国": "KR", "英国": "GB",
+                "德国": "DE", "法国": "FR", "荷兰": "NL", "加拿大": "CA", "澳大利亚": "AU", "马来西亚": "MY"}
+REGION_PREFIX = "REGION:"
+
+
+def region_code(policy):
+    p = (policy or "").strip()
+    if p in REGION_ALIAS:
+        return REGION_ALIAS[p]
+    if re.fullmatch(r"[A-Za-z]{2}", p):
+        return p.upper()
+    return None
+
+
+def group_region(name):
+    """“US A” / “US” / “🇺🇸 US B” → US；其它名字返回 None。"""
+    n = re.sub(r"^[^\w]+", "", name or "").strip()
+    m = re.fullmatch(r"([A-Za-z]{2})(?:\s+[A-Za-z0-9]{1,3})?", n)
+    return m.group(1).upper() if m else None
+
+
+def next_letter_name(region, existing):
+    """按约定给第 N 台起名：HK A、HK B …（跳过已用的字母）。"""
+    region = (region or "").upper()
+    used = {n.strip().upper() for n in existing}
+    for i in range(26 * 27):
+        letter = chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26)
+        name = f"{region} {letter}"
+        if name.upper() not in used:
+            return name
+    return region
 
 
 # ---------------- 解析与规范化 ----------------
@@ -247,31 +282,44 @@ def rulesets_meta():
     return out
 
 
-def resolve_policy(policy, groups):
-    """逻辑策略 → 这个用户的实际策略组名。返回 'DIRECT' / 'REJECT' / 组名 / None(=主选择组)。"""
+def resolve_policy(policy, groups, regions=()):
+    """逻辑策略 → 这个用户的实际策略。返回 'DIRECT' / 'REJECT' / 组名 / 'REGION:US' / None(=主选择组)。"""
     if policy == DIRECT:
         return "DIRECT"
     if policy == REJECT:
         return "REJECT"
     if policy in (PROXY, "", None):
         return None
-    for g in groups:
-        if g == policy:
-            return g
+    if policy in groups:
+        return policy
+    code = region_code(policy)
+    if code:
+        if any(group_region(g) == code for g in groups) or code in regions:
+            return REGION_PREFIX + code
     return None
 
 
-def pick(groups, candidates):
+def pick(groups, candidates, regions=()):
     for c in candidates:
         if c in (DIRECT, REJECT):
             return "DIRECT" if c == DIRECT else "REJECT"
-        for g in groups:
-            if c.lower() in g.lower():
-                return g
+        r = resolve_policy(c, groups, regions)
+        if r:
+            return r
+        if not region_code(c):
+            for g in groups:
+                if c.lower() in g.lower():
+                    return g
     return None
 
 
-def rule_list(spec, groups, rs_meta):
+def region_members(code, groups, nodes):
+    """地区组成员：优先用户拥有的同地区线路组（按名字排，A 在前）；没有就用同地区的节点。"""
+    gs = sorted(g for g in groups if group_region(g) == code)
+    return gs if gs else sorted(n["name"] for n in nodes if n.get("region") == code)
+
+
+def rule_list(spec, groups, rs_meta, regions=()):
     """统一的有序规则列表：[(kind, value, policy)]，kind = DOMAIN-SUFFIX / GEOSITE / GEOIP / RULESET / MATCH；
     policy 为 'DIRECT' / 'REJECT' / 组名 / None（主选择组）。"""
     out = [("GEOSITE", "private", "DIRECT"), ("GEOIP", "private", "DIRECT")]
@@ -279,7 +327,7 @@ def rule_list(spec, groups, rs_meta):
     out += [("DOMAIN-SUFFIX", d, None) for d in spec.get("proxy", [])]
     for key, _, sites, cands, _ in TOGGLES:
         if spec["toggles"].get(key):
-            pol = pick(groups, cands)
+            pol = pick(groups, cands, regions)
             for site in sites:
                 out.append(("GEOSITE", site, pol))
     prof = spec.get("profile")
@@ -287,8 +335,8 @@ def rule_list(spec, groups, rs_meta):
         for it in prof["items"]:
             rid = str(it.get("ruleset_id"))
             if rid in rs_meta and rs_meta[rid].get("count"):     # 还没拉到内容的规则集先跳过
-                out.append(("RULESET", rid, resolve_policy(it.get("policy"), groups)))
-        final = resolve_policy(prof.get("final"), groups)
+                out.append(("RULESET", rid, resolve_policy(it.get("policy"), groups, regions)))
+        final = resolve_policy(prof.get("final"), groups, regions)
     else:
         out += [("GEOSITE", "cn", "DIRECT"), ("GEOIP", "CN", "DIRECT")]
         final = None
@@ -347,11 +395,20 @@ def explain(client, domain):
     gl = _group_lines(s)
     lids = allowed_line_ids(client, gl)
     groups = [g.name for g in s.query(LineGroup).order_by(LineGroup.sort_order) if gl.get(g.id, set()) & lids]
+    from .models import Line
+    lines = s.query(Line).filter(Line.id.in_(list(lids) or [-1])).all()
+    nodes = [{"name": l.name, "region": (l.exit_region or l.entry.server.region or "").upper()} for l in lines]
+    regions = {n["region"] for n in nodes}
     spec = client_rule_spec(client)
     meta = rulesets_meta()
     steps, verdict, unsure = [], None, []
-    label = lambda p: {"DIRECT": "直连", "REJECT": "拦截"}.get(p, p or "🚀 节点选择")
-    for kind, val, pol in rule_list(spec, groups, meta):
+
+    def label(p):
+        if p and p.startswith(REGION_PREFIX):
+            code = p[len(REGION_PREFIX):]
+            return f"{code} 地区组（{' → '.join(region_members(code, groups, nodes)) or '无'}）"
+        return {"DIRECT": "直连", "REJECT": "拦截"}.get(p, p or "🚀 节点选择")
+    for kind, val, pol in rule_list(spec, groups, meta, regions):
         if kind == "MATCH":
             steps.append(("兜底规则", "命中", label(pol)))
             verdict = verdict or label(pol)
@@ -409,12 +466,12 @@ def seed_defaults():
         s.flush()
         ids[name] = rs.id
     std = [{"ruleset_id": ids["局域网"], "policy": DIRECT}, {"ruleset_id": ids["广告"], "policy": REJECT},
-           {"ruleset_id": ids["AI 服务"], "policy": "美国"}, {"ruleset_id": ids["流媒体"], "policy": "香港"},
+           {"ruleset_id": ids["AI 服务"], "policy": "US"}, {"ruleset_id": ids["流媒体"], "policy": "HK"},
            {"ruleset_id": ids["国内域名"], "policy": DIRECT}, {"ruleset_id": ids["国内 IP"], "policy": DIRECT}]
     s.add(RuleProfile(name="标准分流", items=json.dumps(std, ensure_ascii=False), final_policy=PROXY))
     s.add(RuleProfile(name="外贸办公", items=json.dumps(
         [{"ruleset_id": ids["局域网"], "policy": DIRECT}, {"ruleset_id": ids["Teams / Office"], "policy": DIRECT},
-         {"ruleset_id": ids["AI 服务"], "policy": "美国"}, {"ruleset_id": ids["国内域名"], "policy": DIRECT},
+         {"ruleset_id": ids["AI 服务"], "policy": "US"}, {"ruleset_id": ids["国内域名"], "policy": DIRECT},
          {"ruleset_id": ids["国内 IP"], "policy": DIRECT}], ensure_ascii=False), final_policy=PROXY))
     s.add(RuleProfile(name="全局代理", items=json.dumps([{"ruleset_id": ids["局域网"], "policy": DIRECT}]),
                       final_policy=PROXY))

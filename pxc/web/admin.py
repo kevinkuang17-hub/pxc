@@ -428,8 +428,12 @@ def server_join():
         console = request.form.get("console_url", "").strip().rstrip("/")
         set_setting("console_node_url", console)
         payload = {k: request.form.get(k, "").strip() for k in ("name", "region", "domain", "ts_key", "cf_token")}
+        payload["region"] = payload["region"].upper()
+        if not payload["name"] and payload["region"]:
+            from ..rules import next_letter_name
+            payload["name"] = next_letter_name(payload["region"], [x.name for x in Session().query(Server)])
         if not payload["name"]:
-            flash("请填写服务器名称", "error")
+            flash("请填写地区代码（如 HK），名称会按 HK A、HK B … 自动排下去", "error")
         elif not console:
             flash("请填写新服务器能访问到的控制台地址（建议 Tailscale 内网地址）", "error")
         else:
@@ -467,7 +471,10 @@ def quick_line():
         try:
             sid = int(f["server_id"])
             srv = s.get(Server, sid)
-            name = f.get("name", "").strip() or f"{srv.name} {f['tpl']}"
+            name = f.get("name", "").strip()
+            if not name:   # 默认线路名就用服务器名（HK A）；这台已有同名线路时再加标记
+                name = srv.name if not s.query(Line).filter_by(name=srv.name).first() else \
+                    f"{srv.name} {f.get('label', '').strip() or {'reality': 'Reality', 'tls': 'TLS', 'xhttp': 'CDN'}[f['tpl']]}"
             tpl = f["tpl"]
             port = int(f["port"]) if f.get("port") else _free_port(sid, 443)
             inb = Inbound(server_id=sid, kind="entry", protocol="vless", port=port,

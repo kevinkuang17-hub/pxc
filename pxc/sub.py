@@ -264,11 +264,23 @@ def _pick_group(gnames, *keywords):
     return None
 
 
-def _rules_for(snap, c, gnames):
-    from .rules import rule_list
+def _rules_for(snap, c, gnames, nodes=()):
+    """返回 (规则列表, 地区组 {代码: (组名, [成员])})；规则里的 REGION:US 已换成地区组名。"""
+    from .rules import REGION_PREFIX, region_members, rule_list
     spec = c.get("rules") or {"profile": None, "toggles": {"adblock": True, "ai_us": True, "media": True},
                              "direct": [], "proxy": []}
-    return rule_list(spec, gnames, snap.get("rulesets", {}))
+    regions = {n.get("region") for n in nodes if n.get("region")}
+    items = rule_list(spec, gnames, snap.get("rulesets", {}), regions)
+    region_groups, out = {}, []
+    for kind, val, pol in items:
+        if pol and pol.startswith(REGION_PREFIX):
+            code = pol[len(REGION_PREFIX):]
+            if code not in region_groups:
+                members = region_members(code, gnames, nodes)
+                region_groups[code] = (f"{FLAGS.get(code, '🌐')} {code}", members)
+            pol = region_groups[code][0] if region_groups[code][1] else None
+        out.append((kind, val, pol))
+    return out, {k: v for k, v in region_groups.items() if v[1]}
 
 
 def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
@@ -290,7 +302,12 @@ def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
     auto = {"name": AUTO, "type": "url-test", "url": TEST_URL, "interval": 300, "tolerance": 50, "proxies": names}
     rules, providers = [], {}
     meta = snap.get("rulesets", {})
-    for kind, val, pol in _rules_for(snap, c, gnames):
+    items, rgroups = _rules_for(snap, c, gnames, nodes)
+    for name, members in rgroups.values():
+        # 地区组：按 A、B、C 顺序主备切换，A 不通才用 B
+        groups.append({"name": name, "type": "fallback", "proxies": members, "url": TEST_URL, "interval": 300})
+        main["proxies"].insert(1 + len(gnames), name)
+    for kind, val, pol in items:
         p = pol or MAIN
         if kind == "MATCH":
             rules.append(f"MATCH,{p}")
@@ -380,7 +397,12 @@ def render_singbox(snap, c, nodes, base_url=""):
     remote("geosite-cn", "geosite")
     rules = [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}]
     final = MAIN
-    for kind, val, pol in _rules_for(snap, c, gnames):
+    items, rgroups = _rules_for(snap, c, gnames, nodes)
+    for name, members in rgroups.values():
+        groups.append({"type": "urltest", "tag": name, "outbounds": members, "url": TEST_URL, "interval": "5m",
+                       "tolerance": 50})
+    region_names = [n for n, _ in rgroups.values()]
+    for kind, val, pol in items:
         target = ({"action": "reject"} if pol == "REJECT" else
                   {"outbound": "direct"} if pol == "DIRECT" else {"outbound": pol or MAIN})
         if kind == "MATCH":
@@ -409,7 +431,7 @@ def render_singbox(snap, c, nodes, base_url=""):
         "inbounds": [{"type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"], "auto_route": True,
                       "strict_route": True},
                      {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 2080}],
-        "outbounds": [{"type": "selector", "tag": MAIN, "outbounds": [AUTO] + gnames + names + ["direct"]},
+        "outbounds": [{"type": "selector", "tag": MAIN, "outbounds": [AUTO] + gnames + region_names + names + ["direct"]},
                       {"type": "urltest", "tag": AUTO, "outbounds": names, "url": TEST_URL, "interval": "5m"}]
                      + groups + outs + [{"type": "direct", "tag": "direct"}],
         "route": {"auto_detect_interface": True, "final": final, "rules": rules, "rule_set": list(sets.values())},

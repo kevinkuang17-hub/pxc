@@ -6,8 +6,8 @@
   <a class="btn" href="{{ url_for('admin.r_list', res='servers') }}">返回服务器列表</a></div>
 {% else %}
 <form method="post" class="f card">
-  <div class="row"><label class="l">服务器名称 *</label><div><input type="text" name="name" placeholder="HK E" required></div></div>
-  <div class="row"><label class="l">地区代码</label><div><input type="text" name="region" placeholder="HK"></div></div>
+  <div class="row"><label class="l">地区代码 *</label><div><input type="text" name="region" placeholder="HK" required maxlength="2" style="text-transform:uppercase"></div></div>
+  <div class="row"><label class="l">服务器名称</label><div><input type="text" name="name" placeholder="留空自动按顺序：HK A、HK B …"><div class="help">命名约定“地区代码 + 字母”，A 是这个地区第一台，B 第二台，以此类推</div></div></div>
   <div class="row"><label class="l">节点域名</label><div><input type="text" name="domain" placeholder="hke.example.com"><div class="help">先在 Cloudflare 把它解析到新服务器 IP（灰云）。填了 Cloudflare 令牌会自动申请证书。</div></div></div>
   <div class="row"><label class="l">控制台地址 *</label><div><input type="text" name="console_url" value="{{ console }}" placeholder="http://100.64.0.2:54321"><div class="help">新服务器能访问到的控制台地址，建议用 Tailscale 内网地址（控制台不上公网）</div></div></div>
   <div class="row"><label class="l">Tailscale 授权密钥</label><div><input type="text" name="ts_key" placeholder="tskey-auth-…（可选）"><div class="help">填了会让新服务器加入 Tailscale，控制台经内网管理面板</div></div></div>
