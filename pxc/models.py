@@ -99,6 +99,8 @@ class Inbound(Base, JsonMixin):
     remote_id = Column(Integer)                        # 3X-UI 里的入站 id（读回时更新）
     cert_days = Column(Integer)                        # 实测证书剩余天数（TLS 入站）
     reality_ok = Column(Boolean)                       # 伪装目标是否可达且支持 TLS1.3 + h2
+    exit_down = Column(Boolean, default=False)          # 落地：连续探测失败
+    exit_streak = Column(Integer, default=0)            # 落地：正数=连续失败次数，负数=连续成功次数
     health_note = Column(Text, default="")
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=now)
@@ -154,6 +156,8 @@ class Line(Base):
     weight = Column(Integer, default=100)
     enabled = Column(Boolean, default=True)
     retiring_at = Column(DateTime)                           # 计划下线：订阅里标“即将下线”
+    backup_outbound_id = Column(Integer, ForeignKey("px_outbound.id"))  # 备用出站：主落地故障时自动切过去
+    using_backup = Column(Boolean, default=False)
     auto_down = Column(Boolean, default=False)               # 连续探测失败被自动摘除
     fail_streak = Column(Integer, default=0)
     latency_ms = Column(Integer)
@@ -161,8 +165,16 @@ class Line(Base):
     probe_error = Column(Text, default="")
 
     entry = relationship("Inbound")
-    outbound = relationship("Outbound")
+    outbound = relationship("Outbound", foreign_keys=[outbound_id])
+    backup_outbound = relationship("Outbound", foreign_keys=[backup_outbound_id])
     overrides = relationship("ClientLineOverride", cascade="all, delete-orphan", overlaps="line")
+
+    @property
+    def effective_outbound(self):
+        """正在用的出站：主落地故障切到备用时返回备用。"""
+        if self.using_backup and self.backup_outbound is not None:
+            return self.backup_outbound
+        return self.outbound
     memberships = relationship("LineGroupMember", back_populates="line", cascade="all, delete-orphan")
 
 

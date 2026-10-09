@@ -13,9 +13,9 @@ from .xui import XuiClient, XuiError
 
 BACKOFF = [10, 60, 300]          # 失败重试间隔（秒）
 # 用户比对只看这些字段；节点上的流量上限/到期由控制台统一管，下发时清零但不算差异
-CLIENT_CMP_KEYS = ("id", "password", "email", "flow", "enable", "limitIp")
+CLIENT_CMP_KEYS = ("id", "password", "auth", "email", "flow", "enable", "limitIp")
 # 控制台能创建/管理的入站协议；其它协议（socks/http/dokodemo/wireguard…）导入时跳过，也绝不删除
-MANAGED_PROTOCOLS = ("vless", "vmess", "trojan", "shadowsocks")
+MANAGED_PROTOCOLS = ("vless", "vmess", "trojan", "shadowsocks", "hysteria")
 _server_locks = {}
 _locks_guard = threading.Lock()
 
@@ -65,8 +65,11 @@ def residual(remote, rendered):
 _SAME = object()
 
 
+CLIENT_KEY = {"trojan": "password", "hysteria": "auth"}
+
+
 def _client_key(protocol, c):
-    return c.get("password") if protocol == "trojan" else c.get("id")
+    return c.get(CLIENT_KEY.get(protocol, "id"))
 
 
 def _remote_clients(row):

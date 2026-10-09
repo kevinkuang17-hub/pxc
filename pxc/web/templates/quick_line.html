@@ -4,16 +4,17 @@
   <div class="row"><label class="l">协议模板 *</label><div><select name="tpl" id="tpl" onchange="sw()">
     <option value="reality">VLESS + Reality + Vision（主力，不需要证书）</option>
     <option value="tls">VLESS + TCP + TLS + Vision（带回落网站）</option>
-    <option value="xhttp">VLESS + XHTTP + TLS（可套 Cloudflare，备用）</option></select></div></div>
+    <option value="xhttp">VLESS + XHTTP + TLS（可套 Cloudflare，备用）</option>
+    <option value="hysteria">Hysteria2（UDP，手机 / 弱网更快，需要证书）</option></select></div></div>
   <div class="row"><label class="l">线路名称</label><div><input type="text" name="name" placeholder="留空 = 服务器名（如 HK A）"><div class="help">订阅里显示为 🇭🇰 HK A；同地区按 A、B 顺序在地区组里主备切换</div></div></div>
   <div class="row"><label class="l">标记</label><div><input type="text" name="label" placeholder="Reality"></div></div>
   <div class="row"><label class="l">端口</label><div><input type="number" name="port" placeholder="留空自动：优先 443，被占用就随机"></div></div>
   <div class="row t-reality"><label class="l">伪装目标 *</label><div><input type="text" name="reality_target" placeholder="xxx.com:443"><div class="help">同机房、非大品牌、支持 TLS 1.3 + h2 的网站。密钥和 Short ID 自动生成。</div></div></div>
-  <div class="row t-tls t-xhttp" style="display:none"><label class="l">证书 / 私钥路径</label><div><input type="text" name="cert_path" placeholder="/root/cert/域名/fullchain.pem（留空用这个默认）"><input type="text" name="key_path" placeholder="/root/cert/域名/privkey.pem" style="margin-top:6px"></div></div>
+  <div class="row t-tls t-xhttp t-hysteria" style="display:none"><label class="l">证书 / 私钥路径</label><div><input type="text" name="cert_path" placeholder="/root/cert/域名/fullchain.pem（留空用这个默认）"><input type="text" name="key_path" placeholder="/root/cert/域名/privkey.pem" style="margin-top:6px"></div></div>
   <div class="row t-tls" style="display:none"><label class="l">回落</label><div><input type="text" name="fallback" placeholder="8080"></div></div>
   <div class="row t-xhttp" style="display:none"><label class="l">CDN 域名</label><div><input type="text" name="cdn_host" placeholder="cdn.example.com（小黄云，端口须为 443/2053/2083/2087/2096/8443）"></div></div>
   <div class="row"><label class="l">加入线路组</label><div><select name="groups" multiple>{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select><div class="help">用了这些线路组的套餐，用户自动获得这条线路</div></div></div>
   <div class="row"><span></span><div><button class="btn p">创建</button></div></div>
 </form>
-<script>function sw(){var v=document.getElementById('tpl').value;document.querySelectorAll('.t-reality,.t-tls,.t-xhttp').forEach(function(e){e.style.display=e.classList.contains('t-'+v)?'':'none'})}</script>
+<script>function sw(){var v=document.getElementById('tpl').value;document.querySelectorAll('.t-reality,.t-tls,.t-xhttp,.t-hysteria').forEach(function(e){e.style.display=e.classList.contains('t-'+v)?'':'none'})}</script>
 {% endblock %}

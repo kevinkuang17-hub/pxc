@@ -2,6 +2,8 @@
 <div class="toolbar">
   <form method="post"><input type="hidden" name="act" value="probe"><button class="btn p">立即探测线路</button></form>
   <form method="post"><input type="hidden" name="act" value="check"><button class="btn">立即核对域名/证书</button></form>
+  <form method="post"><input type="hidden" name="act" value="exits"><button class="btn">立即测落地</button></form>
+  <form method="post"><input type="hidden" name="act" value="chain"><button class="btn">经线路实测出口 / 解锁</button></form>
   <a class="btn" href="{{ url_for('admin.health') }}">刷新</a>
   <span class="sp"></span>
   <form method="post"><input type="hidden" name="act" value="toggle_auto"><button class="btn">{{ '自动摘除：开' if auto else '自动摘除：关' }}</button></form>
@@ -10,7 +12,7 @@
 {% for c in bad %}{% set lid = c.target.split(':')[1]|int if c.target.startswith('line:') else 0 %}
 {% set iid = c.target.split(':')[1]|int if c.target.startswith('inbound:') else 0 %}
 <tr><td>{% if lid %}{% for l in lines if l.id == lid %}{{ l.name }}{% endfor %}{% elif iid %}{% for i in reality if i.id == iid %}{{ i.tag }}{% else %}{{ c.target }}{% endfor %}{% else %}{{ c.target }}{% endif %}</td>
-<td>{{ {'dns':'域名解析','cert':'证书 / SNI','proxied':'小黄云','ssl_mode':'CDN 端口 / SSL 模式','reality':'伪装目标'}.get(c.kind, c.kind) }}</td>
+<td>{{ {'dns':'域名解析','cert':'证书 / SNI','proxied':'小黄云','ssl_mode':'CDN 端口 / SSL 模式','reality':'伪装目标','exit_ip':'出口 IP'}.get(c.kind, c.kind) }}</td>
 <td class="wrap">{{ c.detail }}<div class="muted small">{{ fmt_dt(c.checked_at) }}</div></td>
 <td>{% if c.kind in ('dns','proxied') and c.target.startswith('line:') %}<form method="post"><input type="hidden" name="act" value="fix"><input type="hidden" name="target" value="{{ c.target }}"><input type="hidden" name="kind" value="{{ c.kind }}"><button class="btn sm p">一键修复</button></form>{% endif %}</td></tr>
 {% endfor %}</tbody></table></div></div>
@@ -19,11 +21,26 @@
 <p class="muted small">控制台每分钟对每条线路做一次 TCP + TLS 握手，连续 3 次失败{{ '自动从订阅摘除，恢复后自动加回' if auto else '只告警（自动摘除已关闭）' }}。走 Cloudflare 的线路从这里测不准，不探测。</p>
 <div class="tbl"><table><thead><tr><th>线路</th><th>状态</th><th>延迟</th><th>连续失败</th><th>最近探测</th><th>错误</th><th></th></tr></thead><tbody>
 {% for l in lines %}<tr><td>{{ l.name }}</td>
-<td>{% if not l.enabled %}<span class="tag">停用</span>{% elif l.auto_down %}<span class="tag err">已摘除</span>{% elif l.fail_streak %}<span class="tag warn">失败 {{ l.fail_streak }}</span>{% elif l.last_probe_at %}<span class="tag ok">正常</span>{% else %}<span class="tag">未探测</span>{% endif %}</td>
+<td>{% if l.using_backup %}<span class="tag warn">用备用落地</span> {% endif %}{% if not l.enabled %}<span class="tag">停用</span>{% elif l.auto_down %}<span class="tag err">已摘除</span>{% elif l.fail_streak %}<span class="tag warn">失败 {{ l.fail_streak }}</span>{% elif l.last_probe_at %}<span class="tag ok">正常</span>{% else %}<span class="tag">未探测</span>{% endif %}</td>
 <td>{{ (l.latency_ms ~ ' ms') if l.latency_ms is not none else '—' }}</td><td>{{ l.fail_streak or 0 }}</td><td>{{ fmt_dt(l.last_probe_at) }}</td>
 <td class="wrap small">{{ l.probe_error[:120] }}</td>
 <td>{% if l.auto_down %}<form method="post"><input type="hidden" name="act" value="restore"><input type="hidden" name="line_id" value="{{ l.id }}"><button class="btn sm">手动恢复</button></form>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7" class="muted">还没有线路</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><h2>落地</h2><p class="muted small">控制台每分钟测一次每个落地的端口。连续 3 次连不上 → 配了“备用出站”的线路自动切到备用并推送到入口服务器；连续 3 次恢复 → 自动切回。没配备用的线路只告警。</p>
+<div class="tbl"><table><thead><tr><th>落地</th><th>服务器</th><th>端口</th><th>状态</th><th>最近</th></tr></thead><tbody>
+{% for e in exits %}<tr><td>{{ e.tag }}</td><td>{{ e.server.name }}</td><td>{{ e.port }}</td>
+<td>{% if e.exit_down %}<span class="tag err">故障</span>{% elif (e.exit_streak or 0) > 0 %}<span class="tag warn">失败 {{ e.exit_streak }}</span>{% elif e.exit_streak %}<span class="tag ok">正常</span>{% else %}<span class="tag">未测</span>{% endif %}</td>
+<td class="small muted">{{ e.health_note }}</td></tr>{% else %}<tr><td colspan="5" class="muted">没有落地</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><h2>出口与解锁（经线路实测）</h2>
+<p class="muted small">控制台本机起一个临时 Xray，用探测账号连每条线路，从线路出口查 IP、试 ChatGPT / Claude / Gemini / Netflix / YouTube Premium。每 3 小时一次。只测“控制台接管”的服务器（探测账号只在接管后才加进入站）。解锁结果仅供参考。
+{% if not xray %}<b style="color:var(--warn)">控制台上还没有 xray 程序，在控制台服务器执行 pxc install-xray。</b>{% endif %}{% if not probe_on %}<b style="color:var(--warn)">探测已关闭。</b>{% endif %}</p>
+<div class="tbl"><table><thead><tr><th>线路</th><th>出口 IP</th><th>解锁</th><th>时间</th></tr></thead><tbody>
+{% for l in lines %}{% set cs = checks.get('line:' ~ l.id, []) %}{% set ip = (cs|selectattr('kind','equalto','exit_ip')|list) %}{% set un = (cs|selectattr('kind','equalto','unlock')|list) %}
+{% if ip or un %}<tr><td>{{ l.name }}</td>
+<td class="wrap">{% if ip %}<span class="tag {{ 'ok' if ip[0].ok else 'err' }}">{{ '符合' if ip[0].ok else '不符' }}</span> <span class="small">{{ ip[0].detail }}</span>{% endif %}</td>
+<td class="wrap">{% if un %}{% for name, v in (un[0].detail|fromjson).items() %}<span class="tag {{ 'ok' if v.ok else 'err' }}" data-tip="{{ v.detail }}">{{ name }} {{ '✓' if v.ok else '✗' }}</span> {% endfor %}{% endif %}</td>
+<td class="small muted">{{ fmt_dt((ip or un)[0].checked_at) }}</td></tr>{% endif %}
+{% endfor %}</tbody></table></div></div>
 <div class="card"><h2>Reality 伪装目标</h2><p class="muted small">每小时检查一次：目标必须可达、TLS 1.3、支持 h2。不合格就换一个（同机房、非大品牌的网站）。</p>
 <div class="tbl"><table><thead><tr><th>入站</th><th>伪装目标</th><th>结果</th></tr></thead><tbody>
 {% for i in reality %}<tr><td><a href="{{ url_for('admin.r_edit', res='inbounds', oid=i.id) }}">{{ i.tag }}</a></td><td>{{ i.reality_target }}</td>

@@ -101,7 +101,7 @@ def _deep_merge(a, b):
     return a
 
 
-def render_inbound(inb, clients):
+def render_inbound(inb, clients, probe_uuid=None):
     srv = inb.server
     sni = inb.tls_sni or srv.domain
     stream = {"network": inb.transport, "security": inb.security}
@@ -113,9 +113,12 @@ def render_inbound(inb, clients):
         stream["wsSettings"] = {"path": inb.path or "/", "host": inb.host or ""}
     elif inb.transport == "grpc":
         stream["grpcSettings"] = {"serviceName": inb.path or "grpc"}
+    elif inb.transport == "hysteria":
+        stream["hysteriaSettings"] = {"version": 2, "udpIdleTimeout": 60}
     if inb.security == "tls":
         stream["tlsSettings"] = {
-            "serverName": sni, "minVersion": "1.2", "alpn": ["h2", "http/1.1"],
+            "serverName": sni, "minVersion": "1.3" if inb.protocol == "hysteria" else "1.2",
+            "alpn": ["h3"] if inb.protocol == "hysteria" else ["h2", "http/1.1"],
             "certificates": [{"certificateFile": inb.cert_path, "keyFile": inb.key_path}],
         }
     elif inb.security == "reality":
@@ -134,15 +137,27 @@ def render_inbound(inb, clients):
                      "flow": "xtls-rprx-vision" if (vision_ok and c.vision and inb.protocol == "vless") else ""}
         elif inb.protocol == "trojan":
             entry = {"password": c.uuid, "email": email, "enable": True}
+        elif inb.protocol == "hysteria":
+            entry = {"auth": c.uuid, "email": email, "enable": True}
         else:
             continue
         limit = c.device_limit if c.device_limit is not None else (c.plan.device_limit if c.plan else 0)
         entry.update({"limitIp": limit or 0, "totalGB": 0, "expiryTime": 0, "subId": "", "tgId": "", "reset": 0})
         cl[c.uuid] = entry
+    if probe_uuid and inb.kind == "entry" and inb.protocol in ("vless", "vmess", "trojan", "hysteria"):
+        # 控制台自己的探测账号：用来经这条线路实测出口 IP 和解锁情况；不占用户名额、不计流量
+        key = {"trojan": "password", "hysteria": "auth"}.get(inb.protocol, "id")
+        entry = {key: probe_uuid, "email": f"pxc-probe.{inb.tag}"[:64], "enable": True, "limitIp": 0, "totalGB": 0,
+                 "expiryTime": 0, "subId": "", "tgId": "", "reset": 0}
+        if inb.protocol == "vless":
+            entry["flow"] = "xtls-rprx-vision" if vision_ok else ""
+        cl[probe_uuid] = entry
 
     if inb.protocol == "shadowsocks":
         settings = {"method": inb.ss_method, "password": crypto.dec(inb.ss_key) or "", "network": "tcp,udp",
                     "clients": []}
+    elif inb.protocol == "hysteria":
+        settings = {"version": 2}
     elif inb.protocol == "vless":
         settings = {"decryption": "none", "fallbacks": []}
         if inb.fallback_dest and inb.transport == "tcp" and inb.security == "tls":
@@ -247,14 +262,28 @@ def _split(v):
     return [x.strip() for x in re.split(r"[,\n]", v or "") if x.strip()]
 
 
+def probe_uuid():
+    """控制台探测账号的 UUID（第一次用时生成，存在设置里）；设置 probe_enabled=0 可关闭。"""
+    from .models import get_setting, set_setting
+    import uuid as _u
+    if get_setting("probe_enabled", "1") != "1":
+        return None
+    v = get_setting("probe_uuid", "")
+    if not v:
+        v = str(_u.uuid4())
+        set_setting("probe_uuid", v)
+    return v
+
+
 def desired_state(server):
     """算出这台服务器的应有状态（与内核无关的中间结构，3X-UI 适配器直接用）。"""
     s = Session()
     inbs = s.query(Inbound).filter_by(server_id=server.id, enabled=True).order_by(Inbound.port).all()
     icl = inbound_clients(server)
     state = {"inbounds": {}, "outbounds": [], "balancers": [], "rules": [], "observatory": None}
+    probe = probe_uuid() if server.mode == "managed" else None   # 观察期不加探测账号，免得比对出差异
     for inb in inbs:
-        state["inbounds"][inb.tag] = render_inbound(inb, icl.get(inb.id, []) if inb.kind == "entry" else [])
+        state["inbounds"][inb.tag] = render_inbound(inb, icl.get(inb.id, []) if inb.kind == "entry" else [], probe)
 
     entry_inbs = [i for i in inbs if i.kind == "entry"]
     entry_by_id = {i.id: i for i in entry_inbs}
@@ -322,11 +351,12 @@ def desired_state(server):
 
     # 按线路：入站 → 落地（即原来的 LD 规则）
     for l in sorted(lines, key=lambda x: x.id):
-        if l.outbound and l.enabled:
+        ob = l.effective_outbound
+        if ob and l.enabled:
             rule = {"type": "field", "ruleTag": f"{PX}l{l.id}", "inboundTag": [xui_tag(l.entry)]}
-            rule.update(_rule_target(l.outbound))
+            rule.update(_rule_target(ob))
             rules.append(rule)
-            roots.append(l.outbound)
+            roots.append(ob)
 
     obs = _collect_outbounds(roots)
     probe_members = []
@@ -426,6 +456,8 @@ def validate_inbound(i, panel=None):
             errs.append(f"{name} 使用 TLS，但没有填证书和私钥路径")
         if not (i.tls_sni or i.server.domain):
             errs.append(f"{name} 使用 TLS，但服务器没有域名")
+    if i.protocol == "hysteria" and (i.security != "tls" or i.transport != "hysteria"):
+        errs.append(f"{name} Hysteria2 必须用 TLS（需要证书）")
     if i.security == "reality":
         for f, label in (("reality_target", "伪装目标"), ("reality_sni", "SNI"), ("reality_private", "私钥"),
                          ("reality_public", "公钥")):

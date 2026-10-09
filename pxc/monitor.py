@@ -61,7 +61,8 @@ def probe_lines(prober=None):
     s = Session()
     lines = [l for l in s.query(Line).filter_by(enabled=True).all()
              if l.entry and l.entry.enabled and l.entry.kind == "entry" and not l.entry.server.maintenance
-             and not l.entry.client_address]          # CDN 线路走 Cloudflare，从这里测不准，跳过
+             and not l.entry.client_address              # CDN 线路走 Cloudflare，从这里测不准，跳过
+             and l.entry.protocol != "hysteria"]          # Hysteria2 走 UDP（QUIC），TCP 握手测不了，交给经线路实测
     targets = {l.id: _target_of(l) for l in lines}
     plain = {l.id for l in lines if l.entry.security not in ("tls", "reality")}
     run = lambda lid: (tcp_probe if default_prober and lid in plain else prober)(*targets[lid])
@@ -163,3 +164,76 @@ def latency_series(line_id, hours=24):
     since = now() - dt.timedelta(hours=hours)
     return [(p.at, p.ok, p.latency_ms) for p in
             s.query(ProbeLog).filter(ProbeLog.line_id == line_id, ProbeLog.at >= since).order_by(ProbeLog.at)]
+
+
+# ---------------- 落地故障自动切换（F12） ----------------
+
+def tcp_probe(host, port, timeout=5):
+    t0 = time.perf_counter()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True, int((time.perf_counter() - t0) * 1000), ""
+    except Exception as e:
+        return False, None, f"{e.__class__.__name__}: {e}"[:200]
+
+
+def probe_exits(prober=None):
+    """测每个落地（SS 2022 端口）能不能连上：连续 3 次失败 → 落地故障，配了备用出站的线路自动切过去；
+    连续 3 次成功 → 落地恢复，切回主落地。切换后自动推送到入口服务器。"""
+    from .sync import enqueue_push
+    prober = prober or tcp_probe
+    s = Session()
+    exits = [i for i in s.query(Inbound).filter_by(kind="exit", enabled=True).all() if not i.server.maintenance]
+    if not exits:
+        return {"exits": 0, "switched": [], "restored": []}
+    res = {i.id: prober(i.server.ip or i.server.domain, i.port) for i in exits}
+    failed = sum(1 for r in res.values() if not r[0])
+    if len(exits) >= 2 and failed == len(exits):
+        events.emit("probe_suppressed", {"failed": failed, "total": len(exits),
+                                         "note": "所有落地同时连不上，可能是控制台网络问题，暂不切换"})
+        return {"exits": len(exits), "switched": [], "restored": [], "suppressed": True}
+    for i in exits:
+        ok, ms, err = res[i.id]
+        st = i.exit_streak or 0
+        st = (min(st, 0) - 1) if ok else (max(st, 0) + 1)
+        i.exit_streak = st
+        if st >= FAIL_LIMIT and not i.exit_down:
+            i.exit_down = True
+            audit("exit.down", i.tag, after=err)
+        elif st <= -FAIL_LIMIT and i.exit_down:
+            i.exit_down = False
+            audit("exit.up", i.tag)
+        i.health_note = (f"{ms}ms" if ok else err)
+    s.flush()
+    down = {i.id for i in exits if i.exit_down}
+    switched, restored, servers = [], [], set()
+
+    def exit_ids(ob):
+        if ob is None:
+            return set()
+        if ob.type in ("exit", "chain") and ob.exit_inbound_id:
+            return {ob.exit_inbound_id}
+        return set()
+
+    for l in s.query(Line).filter(Line.backup_outbound_id.isnot(None)).all():
+        primary_bad = bool(exit_ids(l.outbound) & down)
+        backup_bad = bool(exit_ids(l.backup_outbound) & down)
+        if primary_bad and not l.using_backup and not backup_bad:
+            l.using_backup = True
+            switched.append(l)
+        elif not primary_bad and l.using_backup:
+            l.using_backup = False
+            restored.append(l)
+        else:
+            continue
+        servers.add(l.entry.server_id)
+    s.commit()
+    if switched:
+        audit("line.failover", ",".join(l.name for l in switched))
+        events.emit("exit_failover", {"lines": ", ".join(f"{l.name} → {l.backup_outbound.tag}" for l in switched)})
+    if restored:
+        audit("line.restore", ",".join(l.name for l in restored))
+        events.emit("exit_restore", {"lines": ", ".join(f"{l.name} → {l.outbound.tag}" for l in restored)})
+    if servers:
+        enqueue_push(servers, reason="落地故障自动切换" if switched else "落地恢复，切回主落地")
+    return {"exits": len(exits), "switched": [l.name for l in switched], "restored": [l.name for l in restored]}

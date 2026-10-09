@@ -93,7 +93,7 @@ def node_of(line):
     }
     if inb.security == "tls":
         n["sni"] = inb.tls_sni or srv.domain
-        n["alpn"] = ["h2", "http/1.1"]
+        n["alpn"] = ["h3"] if inb.protocol == "hysteria" else ["h2", "http/1.1"]
     elif inb.security == "reality":
         n["sni"] = inb.reality_sni
         n["pbk"] = inb.reality_public
@@ -178,6 +178,8 @@ def render(snap, c, fmt, nodes_only=False, base_url=""):
 def v2ray_link(n, c):
     name = quote(n["name"])
     addr = f"[{n['address']}]" if ":" in n["address"] else n["address"]
+    if n["protocol"] == "hysteria":
+        return f"hysteria2://{quote(c['uuid'], safe='')}@{addr}:{n['port']}/?sni={quote(n['sni'], safe='')}&alpn=h3&insecure=0#{name}"
     if n["protocol"] == "shadowsocks":
         ui = base64.urlsafe_b64encode(f"{n['method']}:{n['password']}".encode()).decode().rstrip("=")
         return f"ss://{ui}@{addr}:{n['port']}#{name}"
@@ -216,6 +218,9 @@ def v2ray_link(n, c):
 
 def clash_proxy(n, c):
     p = {"name": n["name"], "server": n["address"], "port": n["port"], "udp": True}
+    if n["protocol"] == "hysteria":
+        p.update(type="hysteria2", password=c["uuid"], sni=n["sni"], alpn=["h3"])
+        return p
     if n["protocol"] == "shadowsocks":
         p.update(type="ss", cipher=n["method"], password=n["password"])
         return p
@@ -347,6 +352,10 @@ def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
 
 def singbox_outbound(n, c):
     o = {"tag": n["name"], "server": n["address"], "server_port": n["port"]}
+    if n["protocol"] == "hysteria":
+        o.update(type="hysteria2", password=c["uuid"],
+                 tls={"enabled": True, "server_name": n["sni"], "alpn": ["h3"]})
+        return o
     if n["protocol"] == "shadowsocks":
         o.update(type="shadowsocks", method=n["method"], password=n["password"])
         return o

@@ -130,6 +130,16 @@ EOF
   systemctl daemon-reload; systemctl enable -q pxc-cf-firewall 2>/dev/null
   green "订阅端口 $PXC_PORT 只允许 Cloudflare 访问"
 }
+do_install_xray(){
+  need_root
+  local arch z
+  case "$(uname -m)" in x86_64|amd64) z=Xray-linux-64.zip;; aarch64|arm64) z=Xray-linux-arm64-v8a.zip;; *) red "不支持的架构"; return 1;; esac
+  mkdir -p $PXC_HOME/bin
+  curl -fsSL --retry 3 -o /tmp/pxc-xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/$z" || { red "下载 Xray 失败"; return 1; }
+  "$PY" -c 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);z.extract("xray",sys.argv[2])' /tmp/pxc-xray.zip $PXC_HOME/bin && chmod +x $PXC_HOME/bin/xray
+  rm -f /tmp/pxc-xray.zip
+  green "已安装 $($PXC_HOME/bin/xray version | head -1)（控制台用它经线路实测出口 IP 和解锁）"
+}
 do_uninstall(){
   need_root
   read -rp "卸载会删除程序和服务（数据目录 /var/lib/pxc 保留），确定？[y/N] " a; [ "$a" = y ] || return 0
@@ -171,6 +181,7 @@ case "${1:-}" in
   legacy-path) need_root; set_env PXC_LEGACY_SUB_PATHS "${2:?例：pxc legacy-path /sub/,/json/}"; do_restart;;
   set) need_root; cli set "${2:?缺少设置名}" "${3:-}";;
   get) cli get "${2:?缺少设置名}";;
+  install-xray) do_install_xray;;
   version) cat VERSION;;
   *) echo "用法：pxc [start|stop|restart|status|log|url|port N|path X|reset-password|reset-2fa|clear-allowlist|cert 域名 令牌|update|rollback|backup|restore 文件|cf-firewall|uninstall|version]";;
 esac

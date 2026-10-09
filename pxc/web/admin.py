@@ -474,10 +474,11 @@ def quick_line():
             name = f.get("name", "").strip()
             if not name:   # 默认线路名就用服务器名（HK A）；这台已有同名线路时再加标记
                 name = srv.name if not s.query(Line).filter_by(name=srv.name).first() else \
-                    f"{srv.name} {f.get('label', '').strip() or {'reality': 'Reality', 'tls': 'TLS', 'xhttp': 'CDN'}[f['tpl']]}"
+                    f"{srv.name} {f.get('label', '').strip() or {'reality': 'Reality', 'tls': 'TLS', 'xhttp': 'CDN', 'hysteria': 'Hy2'}[f['tpl']]}"
             tpl = f["tpl"]
-            port = int(f["port"]) if f.get("port") else _free_port(sid, 443)
-            inb = Inbound(server_id=sid, kind="entry", protocol="vless", port=port,
+            port = int(f["port"]) if f.get("port") else _free_port(sid, None if f["tpl"] == "hysteria" else 443)
+            inb = Inbound(server_id=sid, kind="entry", protocol="hysteria" if f["tpl"] == "hysteria" else "vless",
+                          port=port,
                           tag="ln-" + (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or str(port)))
             inb.server = srv
             if tpl == "reality":
@@ -486,7 +487,7 @@ def quick_line():
                 if not inb.reality_target:
                     raise Invalid("Reality 需要填伪装目标（同机房、非大品牌、支持 TLS1.3+h2 的网站，如 xxx.com:443）")
             else:
-                inb.transport = "xhttp" if tpl == "xhttp" else "tcp"
+                inb.transport = {"xhttp": "xhttp", "hysteria": "hysteria"}.get(tpl, "tcp")
                 inb.security = "tls"
                 inb.cert_path = f.get("cert_path", "").strip() or f"/root/cert/{srv.domain}/fullchain.pem"
                 inb.key_path = f.get("key_path", "").strip() or f"/root/cert/{srv.domain}/privkey.pem"
@@ -494,7 +495,7 @@ def quick_line():
                     inb.path = "/" + secrets.token_hex(6)
                     inb.client_address = f.get("cdn_host", "").strip()
                     inb.host = inb.client_address
-                else:
+                elif tpl == "tls":
                     inb.fallback_dest = f.get("fallback", "").strip()
             from .resources import inbound_check
             inbound_check(inb, f)

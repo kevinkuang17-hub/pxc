@@ -216,6 +216,11 @@ if [ "$PXC_ROLE" = sub ] && [ "${PXC_CF_ONLY:-1}" = 1 ] && command -v iptables >
   /usr/local/bin/pxc cf-firewall >/dev/null 2>&1 && green "  已设置" || yellow "  设置失败，可稍后执行 pxc cf-firewall"
 fi
 
+if [ "$PXC_ROLE" = console ] && [ ! -x "$PXC_HOME/bin/xray" ]; then
+  step "安装 Xray（用于经线路实测出口 IP 和解锁）"
+  /usr/local/bin/pxc install-xray >/dev/null 2>&1 && green "  已安装" || yellow "  下载失败，不影响其它功能；以后可执行 pxc install-xray"
+fi
+
 systemctl daemon-reload
 systemctl enable -q pxc-web
 systemctl restart pxc-web

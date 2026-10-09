@@ -93,6 +93,24 @@ def health():
             monitor.check_reality_targets()
             flash(f"已探测 {res['probed']} 条线路" + (f"；新摘除：{', '.join(res['down'])}" if res["down"] else "") +
                   (f"；恢复：{', '.join(res['up'])}" if res["up"] else ""), "ok")
+        elif act == "chain":
+            import threading
+            from .. import probe
+
+            def _bg():
+                try:
+                    probe.run_all()
+                finally:
+                    Session.remove()
+            if not probe.xray_bin():
+                flash("控制台上没有 xray 程序：在控制台服务器上执行 pxc install-xray 后再测", "error")
+            else:
+                threading.Thread(target=_bg, daemon=True).start()
+                flash("已开始经线路实测，每条线路约 10–20 秒，几分钟后刷新本页看结果", "ok")
+        elif act == "exits":
+            res = monitor.probe_exits()
+            flash(f"已测 {res['exits']} 个落地" + (f"；切到备用：{', '.join(res['switched'])}" if res["switched"] else "") +
+                  (f"；切回主落地：{', '.join(res['restored'])}" if res["restored"] else ""), "ok")
         elif act == "check":
             probs = cfmod.check_all()
             flash(f"核对完成，{len(probs)} 个问题" if probs else "核对完成，全部一致", "warn" if probs else "ok")
@@ -128,8 +146,11 @@ def health():
     for c in s.query(CheckResult).all():
         checks.setdefault(c.target, []).append(c)
     reality = s.query(Inbound).filter_by(security="reality").order_by(Inbound.tag).all()
-    bad = [c for c in s.query(CheckResult).filter_by(ok=False).all()]
-    return render_template("health.html", lines=lines, checks=checks, reality=reality, bad=bad,
+    bad = [c for c in s.query(CheckResult).filter_by(ok=False).all() if c.kind != "unlock"]   # 解锁不了是常态，不算问题
+    from .. import probe
+    exits = s.query(Inbound).filter_by(kind="exit").order_by(Inbound.tag).all()
+    return render_template("health.html", lines=lines, checks=checks, reality=reality, bad=bad, exits=exits,
+                           xray=bool(probe.xray_bin()), probe_on=get_setting("probe_enabled", "1") == "1",
                            auto=get_setting("auto_remove_lines", "1") == "1",
                            cf=s.query(CfAccount).count())
 

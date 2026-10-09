@@ -6,3 +6,4 @@ requests>=2.31
 PyYAML>=6.0
 gunicorn>=22
 qrcode>=7.4
+PySocks>=1.7

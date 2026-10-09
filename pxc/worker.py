@@ -71,6 +71,14 @@ def _hourly(cloudflare, monitor, rules):
         Session.remove()
 
 
+def _chain():
+    from . import probe
+    try:
+        _safe(probe.run_all)
+    finally:
+        Session.remove()
+
+
 def tick(state, t):
     from . import cloudflare, events, monitor, reports, rules, sync, traffic
     if t - state.get("jobs", 0) >= 2:
@@ -85,12 +93,18 @@ def tick(state, t):
         _safe(refresh_all)
         _safe(traffic.collect_all)
         _safe(monitor.probe_lines)
+        _safe(monitor.probe_exits)
         _safe(events.deliver_pending)
     if t - state.get("hourly", 0) >= 3600 and not (state.get("hourly_thread") and state["hourly_thread"].is_alive()):
         state["hourly"] = t
         # DNS / 证书 / Cloudflare / 拉规则都可能慢，放到单独线程，不耽误 2 秒一次的推送任务
         th = threading.Thread(target=_hourly, args=(cloudflare, monitor, rules), daemon=True)
         state["hourly_thread"] = th
+        th.start()
+    if t - state.get("chain", 0) >= 3 * 3600 and not (state.get("chain_thread") and state["chain_thread"].is_alive()):
+        state["chain"] = t
+        th = threading.Thread(target=_chain, daemon=True)   # 经线路实测出口 IP / 解锁：每 3 小时一次
+        state["chain_thread"] = th
         th.start()
     if t - state.get("reconcile", 0) >= 300:
         state["reconcile"] = t
@@ -113,7 +127,8 @@ def main():
     from .rules import seed_defaults
     _safe(seed_defaults)                         # 首次运行建好常用规则集和方案（不覆盖已有的）
     state = {"reconcile": time.time() - 240,     # 启动 1 分钟后做第一次比对
-             "hourly": time.time() - 3540}       # 启动 1 分钟后做第一次核对 / 拉规则
+             "hourly": time.time() - 3540,       # 启动 1 分钟后做第一次核对 / 拉规则
+             "chain": time.time() - 3 * 3600 + 600}   # 启动 10 分钟后做第一次经线路实测
     log.info("worker started")
     while True:
         try:

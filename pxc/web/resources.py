@@ -172,6 +172,8 @@ def inbound_check(obj, form):
         elif not crypto.ss2022_key_ok(obj.ss_method, crypto.dec(obj.ss_key)):
             raise Invalid(f"密钥长度与 {obj.ss_method} 不匹配。留空即可自动生成正确长度的密钥。")
         obj.security, obj.transport = "none", "tcp"
+    if obj.protocol == "hysteria":
+        obj.transport, obj.security = "hysteria", "tls"
     if obj.security == "reality" and not obj.reality_private:
         priv, pub = crypto.gen_x25519()
         obj.reality_private, obj.reality_public = crypto.enc(priv), pub
@@ -221,6 +223,8 @@ def outbound_check(obj, form):
 
 def line_check(obj, form):
     s = Session()
+    if not obj.backup_outbound_id:
+        obj.using_backup = False
     other = s.query(Line).filter(Line.entry_inbound_id == obj.entry_inbound_id, Line.id != (obj.id or -1)).first()
     if other:
         raise Invalid(f"这个入站已经被线路 {other.name} 使用；一个入站只能对应一条线路（出口由线路决定）")
@@ -261,6 +265,7 @@ def refs_inbound(obj):
 def refs_outbound(obj):
     s = Session()
     r = [f"线路 {l.name}" for l in s.query(Line).filter_by(outbound_id=obj.id)]
+    r += [f"线路 {l.name}（备用）" for l in s.query(Line).filter_by(backup_outbound_id=obj.id)]
     r += [f"路由规则 #{x.id}" for x in s.query(RouteRule).filter_by(outbound_id=obj.id)]
     r += [f"出站 {o.tag}（上一跳）" for o in s.query(Outbound).filter_by(via_outbound_id=obj.id)]
     r += [f"负载组 {o.tag}" for o in s.query(Outbound).filter_by(type="balancer")
@@ -315,9 +320,10 @@ RESOURCES = {
             F("kind", "类型", "select", choices=lambda: [("entry", "入口（给用户连）"), ("exit", "落地（SS 2022，只供中转）")]),
             F("tag", "稳定标签", required=True, help="如 ln-sg-a，不随端口变化；路由规则按它生成"),
             F("protocol", "协议", "select", choices=lambda: [("vless", "VLESS"), ("trojan", "Trojan"), ("vmess", "VMess"),
-                                                          ("shadowsocks", "Shadowsocks 2022")]),
+                                                          ("shadowsocks", "Shadowsocks 2022"),
+                                                          ("hysteria", "Hysteria2（UDP，移动网络 / 弱网）")]),
             F("transport", "传输", "select", choices=lambda: [("tcp", "TCP"), ("xhttp", "XHTTP"), ("ws", "WebSocket"),
-                                                           ("grpc", "gRPC")]),
+                                                           ("grpc", "gRPC"), ("hysteria", "Hysteria（QUIC）")]),
             F("security", "安全", "select", choices=lambda: [("reality", "Reality"), ("tls", "TLS"), ("none", "无")]),
             F("port", "端口", "int", required=True), F("listen", "监听地址", help="留空 = 全部"),
             F("tls_sni", "TLS 域名", help="留空 = 服务器域名", group="TLS"),
@@ -377,6 +383,8 @@ RESOURCES = {
             F("label", "标记", help="名称后缀，如 Reality / ISP"),
             F("entry_inbound_id", "入口入站", "select", choices=_entries, coerce=int, required=True),
             F("outbound_id", "出站", "select", choices=_outbounds(), coerce=int),
+            F("backup_outbound_id", "备用出站", "select", choices=_outbounds("（不设备用）"), coerce=int,
+              help="主落地连续 3 次连不上时自动切到这里，恢复后自动切回；切换会自动推送到入口服务器"),
             F("exit_region", "出口地区", help="留空自动：有落地取落地地区"),
             F("groups", "所属线路组", "multi", choices=_groups, get=_line_groups_get, set=_line_groups_set,
               after_flush=True),

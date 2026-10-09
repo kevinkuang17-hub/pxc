@@ -52,7 +52,7 @@ def import_inbounds(server, rows):
         st = row.get("streamSettings") or {}
         se = row.get("settings") or {}
         proto = row.get("protocol")
-        if proto not in ("vless", "vmess", "trojan", "shadowsocks"):
+        if proto not in ("vless", "vmess", "trojan", "shadowsocks", "hysteria"):
             report["warnings"].append(f"{server.name} 端口 {row['port']} 协议 {proto} 暂不支持，已跳过")
             continue
         inb = Inbound(server_id=server.id, tag=_tag_for(server, row, s), protocol=proto,
@@ -129,7 +129,7 @@ def import_inbounds(server, rows):
 def _import_clients(server, inb, line, clients, stats, report):
     s = Session()
     for c in clients:
-        key = c.get("password") if inb.protocol == "trojan" else c.get("id")
+        key = c.get({"trojan": "password", "hysteria": "auth"}.get(inb.protocol, "id"))
         if not key:
             continue
         sub_id = c.get("subId") or ""

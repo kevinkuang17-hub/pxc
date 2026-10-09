@@ -268,7 +268,7 @@ def check_all(cert_fetcher=None, resolver=None):
             d = f"{srv.domain} 解析到 {', '.join(ips) or '无'}，服务器 IP {srv.ip or '未填'}"
             put(t, "dns", ok, d, "" if ok else "fix_dns", line.name)
         # 2+3) 证书覆盖下发的 SNI 且未过期（TLS 线路）
-        if inb.security == "tls":
+        if inb.security == "tls" and inb.protocol != "hysteria":     # Hysteria2 证书在 UDP 上，TCP 取不到
             sni = inb.tls_sni or srv.domain
             host = srv.ip or srv.domain
             try:

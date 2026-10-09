@@ -203,7 +203,7 @@ class MockXui:
             new = json.loads(d["settings"])["clients"][0]
             cl = row["settings"]["clients"]
             for i, c in enumerate(cl):
-                if c.get("id") == key or c.get("password") == key:
+                if key in (c.get("id"), c.get("password"), c.get("auth")):
                     cl[i] = new
                     self._sync_stats(row)
                     return ok()
@@ -213,7 +213,7 @@ class MockXui:
         def del_client(iid, key):
             row = next((r for r in self.inbounds if r["id"] == iid), None)
             row["settings"]["clients"] = [c for c in row["settings"].get("clients", [])
-                                          if c.get("id") != key and c.get("password") != key]
+                                          if key not in (c.get("id"), c.get("password"), c.get("auth"))]
             self._sync_stats(row)
             return ok()
 
