@@ -66,14 +66,14 @@
 装在一台**不对用户公开**的服务器上（PRD 待定问题 1：可以和现在的 3X-UI 主控同机，端口不冲突即可）。SSH 登录服务器，用 root 粘贴这一行（和装 3X-UI 一样，不用上传任何文件）：
 
 ```
-bash <(curl -fsSL https://raw.githubusercontent.com/kevinkuang19009-coder/pxc/main/scripts/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/kevinkuang17-hub/pxc/main/scripts/install.sh)
 ```
 
 以后升级：服务器上输入 `pxc update`（或再执行一次上面这行）。升级只换程序，数据、配置、密钥都不动；升级前自动完整备份，升级后核对数据条数，不对就自动还原。
 
 代码推到 GitHub 的 main 分支后，GitHub Actions 会自动跑全部测试（含真实 Xray 互通），通过才发布新版本；测试不过不会发布，服务器上的 `pxc update` 只会拿到测试通过的版本。
 
-**Docker 方式（可选）**：`git clone https://github.com/kevinkuang19009-coder/pxc && cd pxc && cp docker/env.example .env`，改 `.env` 里的登录路径，然后 `docker compose up -d --build`，再执行 `docker compose exec web python -m pxc.cli create-admin admin` 拿到初始密码。数据在 `./data`。
+**Docker 方式（可选）**：`git clone https://github.com/kevinkuang17-hub/pxc && cd pxc && cp docker/env.example .env`，改 `.env` 里的登录路径，然后 `docker compose up -d --build`，再执行 `docker compose exec web python -m pxc.cli create-admin admin` 拿到初始密码。数据在 `./data`。
 
 安装完会打印 **登录地址、账号、随机密码**。第一次登录必须用手机验证器（Google Authenticator / Microsoft Authenticator / 1Password）绑定，并保存 10 个备用码。
 

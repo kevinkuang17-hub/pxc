@@ -69,7 +69,7 @@ jobs:
           mkdir -p dist/pxc-release
           cp -a pxc scripts requirements.txt VERSION dist/pxc-release/
           find dist -name '__pycache__' -prune -exec rm -rf {} +
-          sed -i "s#kevinkuang19009-coder/pxc}#$REPO}#" dist/pxc-release/scripts/install.sh
+          sed -i "s#kevinkuang17-hub/pxc}#$REPO}#" dist/pxc-release/scripts/install.sh
           tar -C dist -czf dist/pxc-release.tar.gz pxc-release
           (cd dist && sha256sum pxc-release.tar.gz > pxc-release.tar.gz.sha256)
           cp dist/pxc-release/scripts/install.sh dist/install.sh

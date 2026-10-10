@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # 节点控制台 一键安装 / 升级
-#   控制台：  bash <(curl -fsSL https://raw.githubusercontent.com/kevinkuang19009-coder/pxc/main/scripts/install.sh)
+#   控制台：  bash <(curl -fsSL https://raw.githubusercontent.com/kevinkuang17-hub/pxc/main/scripts/install.sh)
 #   订阅服务：在控制台“安全与对接 → 添加订阅节点”复制单行命令
 #   本地包：  bash install.sh              （在解压后的目录里执行）
 #__PRESET__
 set -euo pipefail
 
-PXC_REPO="${PXC_REPO:-kevinkuang19009-coder/pxc}"
-case "$PXC_REPO" in YOUR_GITHUB/*|"") PXC_REPO=kevinkuang19009-coder/pxc ;; esac
+PXC_REPO="${PXC_REPO:-kevinkuang17-hub/pxc}"
+case "$PXC_REPO" in YOUR_GITHUB/*|"") PXC_REPO=kevinkuang17-hub/pxc ;; esac
 PXC_ROLE="${PXC_ROLE:-console}"
 PXC_HOME=/opt/pxc
 PXC_ETC=/etc/pxc

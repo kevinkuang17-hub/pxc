@@ -70,7 +70,7 @@ do_restore(){
 do_update(){
   need_root
   local repo="${PXC_REPO:-}"
-  case "$repo" in YOUR_GITHUB/*|"") repo=kevinkuang19009-coder/pxc ;; esac
+  case "$repo" in YOUR_GITHUB/*|"") repo=kevinkuang17-hub/pxc ;; esac
   yellow "从 GitHub 升级（$repo），升级前会自动完整备份，数据不会被覆盖"
   curl -fsSL "https://github.com/$repo/releases/latest/download/install.sh" -o /tmp/pxc-install.sh 2>/dev/null \
     || curl -fsSL "https://raw.githubusercontent.com/$repo/main/scripts/install.sh" -o /tmp/pxc-install.sh \
