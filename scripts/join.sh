@@ -50,7 +50,7 @@ fi
 step "安装 3X-UI"
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) die "不支持的架构 $(uname -m)";; esac
 if [ -z "$XUI_VERSION" ]; then
-  XUI_VERSION=$(curl -fsSL https://api.github.com/repos/MHSanaei/3x-ui/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4 || true)
+  XUI_VERSION=$(curl -fsSL https://api.github.com/repos/MHSanaei/3x-ui/releases/latest 2>/dev/null | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)
 fi
 [ -n "$XUI_VERSION" ] || die "取不到 3X-UI 版本号（GitHub 不通？可设置 XUI_VERSION=v2.x.x 后重试）"
 systemctl stop x-ui 2>/dev/null || true
@@ -183,8 +183,10 @@ fi
 step "注册到控制台"
 PANEL_HOST="${TS_IP:-$PUBLIC_IP}"
 PANEL_URL="http://$PANEL_HOST:$PANEL_PORT$PANEL_PATH"
-BODY=$(printf '{"token":"%s","panel_url":"%s","user":"%s","password":"%s","public_ip":"%s","hostname":"%s"}' \
-  "$JOIN_TOKEN" "$PANEL_URL" "$PANEL_USER" "$PANEL_PASS" "$PUBLIC_IP" "$(hostname)")
+# 3X-UI 3.x 支持 API 令牌：控制台用令牌管理，比账号密码稳（不受登录限流影响）；旧版本没有就用账号密码
+API_TOKEN=$(/usr/local/x-ui/x-ui setting -getApiToken -tokenName pxc-console -tokenScope admin 2>/dev/null | awk '/apiToken:/{print $2}' | tail -1 || true)
+BODY=$(printf '{"token":"%s","panel_url":"%s","user":"%s","password":"%s","api_token":"%s","public_ip":"%s","hostname":"%s"}' \
+  "$JOIN_TOKEN" "$PANEL_URL" "$PANEL_USER" "$PANEL_PASS" "${API_TOKEN:-}" "$PUBLIC_IP" "$(hostname)")
 RESP=$(curl -fsS -X POST -H 'Content-Type: application/json' -d "$BODY" "$CONSOLE_URL/internal/join") \
   || die "注册失败：控制台 $CONSOLE_URL 连不上，或令牌已用过/过期。面板已装好，可在控制台手动添加：$PANEL_URL 账号 $PANEL_USER"
 green "══════════════════════════════════════════════"

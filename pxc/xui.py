@@ -30,23 +30,41 @@ class XuiClient:
 
     # ---------- 基础 ----------
 
+    def _csrf(self, path):
+        """新版 3X-UI（3.x）的 POST 要带 CSRF 令牌：先从面板取一个（旧版本没有这个接口，忽略）。"""
+        try:
+            r = self.http.get(self.base + path, timeout=self.timeout, headers={"X-Requested-With": "XMLHttpRequest"})
+            tok = r.json().get("obj") if r.status_code == 200 else None
+        except (requests.RequestException, ValueError, AttributeError):
+            tok = None
+        if isinstance(tok, str) and tok:
+            self.http.headers["X-CSRF-Token"] = tok
+            return True
+        return False
+
     def _login(self):
         if self._logged_in:
             return
+        self._csrf("/csrf-token")
         r = self._raw("POST", "/login", data={"username": self.server.panel_user,
                                               "password": crypto.dec(self.server.panel_pass) or ""})
         if not r.get("success"):
             raise XuiError("面板登录失败：" + (r.get("msg") or "用户名或密码错误"))
         self._logged_in = True
+        self._csrf("/panel/csrf-token")
 
     def _raw(self, method, path, **kw):
         url = self.base + path
+        retried = kw.pop("_retried", False)
         try:
             resp = self.http.request(method, url, timeout=kw.pop("timeout", self.timeout), **kw)
         except requests.RequestException as e:
             raise XuiError(f"连不上面板 {self.base}：{e.__class__.__name__}") from e
         if resp.status_code == 404:
             raise _NotFound(path)
+        if resp.status_code == 403 and method != "GET" and not retried and \
+                "Authorization" not in self.http.headers and self._csrf("/panel/csrf-token"):
+            return self._raw(method, path, _retried=True, **kw)        # CSRF 令牌过期：取新的再试一次
         if resp.status_code in (401, 403):
             raise XuiError(f"面板拒绝访问（HTTP {resp.status_code}），请检查令牌或账号密码")
         if resp.status_code >= 400:
@@ -91,7 +109,7 @@ class XuiClient:
             return self.call("POST", "/server/status", "/panel/server/status") or {}
 
     def get_template(self):
-        obj = self.call("POST", "/panel/xray/", "/xui/xray/")
+        obj = self.call("POST", "/panel/api/xray/", "/panel/xray/", "/xui/xray/")
         if isinstance(obj, str):
             obj = json.loads(obj)
         tpl = obj.get("xraySetting", obj) if isinstance(obj, dict) else obj
@@ -101,7 +119,7 @@ class XuiClient:
 
     def onlines(self):
         try:
-            return self.call("POST", "/panel/api/inbounds/onlines") or []
+            return self.call("POST", "/panel/api/clients/onlines", "/panel/api/inbounds/onlines") or []
         except XuiError:
             return []
 
@@ -119,13 +137,17 @@ class XuiClient:
 
     def outbound_traffic(self):
         """3X-UI 累计的各出站流量：[{tag, up, down}]。旧版本没有这个接口时抛 NoEndpoint。"""
-        return self.call("POST", "/panel/xray/getOutboundsTraffic", "/panel/api/xray/getOutboundsTraffic") or []
+        try:
+            return self.call("GET", "/panel/api/xray/getOutboundsTraffic") or []          # 3.x
+        except NoEndpoint:
+            return self.call("POST", "/panel/xray/getOutboundsTraffic") or []
 
     def client_ips(self, email):
         """这个用户最近连过来的 IP（需要面板开启 IP 记录）。"""
         from urllib.parse import quote
         try:
-            obj = self.call("POST", f"/panel/api/inbounds/clientIps/{quote(email, safe='')}")
+            obj = self.call("POST", f"/panel/api/clients/ips/{quote(email, safe='')}",
+                            f"/panel/api/inbounds/clientIps/{quote(email, safe='')}")
         except XuiError:
             return []
         if isinstance(obj, str):
@@ -219,7 +241,7 @@ class XuiClient:
         self.call("POST", f"/panel/api/clients/del/{email}")
 
     def save_template(self, tpl):
-        return self.call("POST", "/panel/xray/update", "/xui/xray/update",
+        return self.call("POST", "/panel/api/xray/update", "/panel/xray/update", "/xui/xray/update",
                          data={"xraySetting": json.dumps(tpl, ensure_ascii=False, indent=2),
                                "outboundTestUrl": "https://www.gstatic.com/generate_204"})
 

@@ -162,8 +162,73 @@ def server_check(obj, form):
                       f"以及服务器防火墙已放行控制台 IP；如果只是先录入，勾选“跳过连接测试”。")
 
 
+REALITY_TARGETS = ["www.microsoft.com:443", "www.apple.com:443", "www.amazon.com:443", "dl.google.com:443",
+                   "www.cloudflare.com:443", "www.nvidia.com:443"]
+
+
+def free_port(server_id, prefer=None, exclude_id=None):
+    import random
+    s = Session()
+    used = {i.port for i in s.query(Inbound).filter(Inbound.server_id == server_id, Inbound.id != (exclude_id or -1))}
+    srv = s.get(Server, server_id)
+    from ..state import panel_port
+    used.add(panel_port(srv) if srv else None)
+    used |= {2096, 2053, 80, 22}
+    if prefer and prefer not in used:
+        return prefer
+    while True:
+        p = random.randint(20000, 60000)
+        if p not in used:
+            return p
+
+
+def inbound_defaults(obj):
+    """3X-UI 新建入站时自动带出的那些：端口、标签、证书路径、伪装目标、路径……没填的都自动补上。"""
+    import random
+    import secrets
+    s = Session()
+    if obj.server_id and obj.server is None:
+        obj.server = s.get(Server, obj.server_id)
+    srv = obj.server
+    if obj.kind == "exit":
+        obj.protocol, obj.transport, obj.security = "shadowsocks", "tcp", "none"
+    elif obj.protocol == "shadowsocks":
+        raise Invalid("Shadowsocks 只用于落地。入口请选 VLESS / Trojan / VMess / Hysteria2")
+    if obj.protocol == "hysteria":
+        obj.transport, obj.security = "hysteria", "tls"
+    if obj.security == "reality" and obj.transport not in ("tcp", "xhttp", "grpc"):
+        obj.transport = "tcp"
+    if not obj.port and srv:
+        prefer = 443 if obj.kind == "entry" and obj.security in ("reality", "tls") and obj.protocol != "hysteria" else None
+        obj.port = free_port(srv.id, prefer, obj.id)
+    if not obj.tag and srv:
+        kind = "ld" if obj.kind == "exit" else {"hysteria": "hy2"}.get(obj.protocol) or \
+            (obj.security if obj.security in ("reality", "tls") else obj.protocol)
+        import re as _re
+        base = _re.sub(r"[^a-z0-9]+", "-", f"{srv.name}-{kind}".lower()).strip("-")[:40] or f"in-{obj.port}"
+        tag, n = base, 2
+        while s.query(Inbound).filter(Inbound.tag == tag, Inbound.id != (obj.id or -1)).first():
+            tag, n = f"{base}-{n}", n + 1
+        obj.tag = tag
+    if obj.security == "tls" and srv:
+        dom = obj.tls_sni or srv.domain
+        if not dom:
+            raise Invalid("TLS 需要域名：先在服务器资料里填节点域名，或者改用 Reality")
+        if not obj.cert_path:
+            obj.cert_path = f"/root/cert/{dom}/fullchain.pem"
+        if not obj.key_path:
+            obj.key_path = f"/root/cert/{dom}/privkey.pem"
+    if obj.security == "reality" and not obj.reality_target:
+        obj.reality_target = random.choice(REALITY_TARGETS)
+    if obj.transport in ("ws", "xhttp") and not obj.path:
+        obj.path = "/" + secrets.token_hex(5)
+    if obj.transport == "grpc" and not obj.path:
+        obj.path = secrets.token_hex(6)
+
+
 def inbound_check(obj, form):
     s = Session()
+    inbound_defaults(obj)
     if obj.protocol == "shadowsocks":
         if not obj.ss_method:
             obj.ss_method = "2022-blake3-aes-128-gcm"
@@ -322,28 +387,43 @@ RESOURCES = {
                  ("transport", "传输"), ("security", "安全"), ("port", "端口"), ("enabled", "启用")],
         "fields": [
             F("server_id", "服务器", "select", choices=_servers, coerce=int, required=True),
-            F("kind", "类型", "select", choices=lambda: [("entry", "入口（给用户连）"), ("exit", "落地（SS 2022，只供中转）")]),
-            F("tag", "稳定标签", required=True, help="如 ln-sg-a，不随端口变化；路由规则按它生成"),
-            F("protocol", "协议", "select", choices=lambda: [("vless", "VLESS"), ("trojan", "Trojan"), ("vmess", "VMess"),
-                                                          ("shadowsocks", "Shadowsocks 2022"),
-                                                          ("hysteria", "Hysteria2（UDP，移动网络 / 弱网）")]),
-            F("transport", "传输", "select", choices=lambda: [("tcp", "TCP"), ("xhttp", "XHTTP"), ("ws", "WebSocket"),
-                                                           ("grpc", "gRPC"), ("hysteria", "Hysteria（QUIC）")]),
-            F("security", "安全", "select", choices=lambda: [("reality", "Reality"), ("tls", "TLS"), ("none", "无")]),
-            F("port", "端口", "int", required=True), F("listen", "监听地址", help="留空 = 全部"),
-            F("tls_sni", "TLS 域名", help="留空 = 服务器域名", group="TLS"),
-            F("cert_path", "证书路径", group="TLS"), F("key_path", "私钥路径", group="TLS"),
-            F("fallback_dest", "回落", help="如 8080 或 127.0.0.1:8080（TCP+TLS）", group="TLS"),
-            F("reality_target", "伪装目标", help="host:443", group="Reality"),
-            F("reality_sni", "伪装 SNI", help="留空 = 伪装目标域名", group="Reality"),
-            F("reality_private", "私钥", "secret", help="留空自动生成", group="Reality"),
-            F("reality_public", "公钥", group="Reality"), F("reality_short_id", "Short ID", group="Reality"),
-            F("path", "路径 / serviceName", group="传输"), F("host", "Host", group="传输"),
-            F("client_address", "订阅地址覆盖", help="CDN 线路填 CDN 域名；留空 = 服务器域名", group="传输"),
-            F("client_port", "订阅端口覆盖", "int", group="传输"),
-            F("ss_method", "SS 加密方式", "select", choices=lambda: SS_METHODS, group="Shadowsocks"),
-            F("ss_key", "SS 密钥", "secret", help="留空自动生成，长度自动匹配加密方式", group="Shadowsocks"),
-            F("advanced_json", "高级 JSON", "json", help='覆盖 {"settings": {...}, "streamSettings": {...}}；导入的入站会自动带上'),
+            F("kind", "类型", "select", choices=lambda: [("entry", "入口（给用户连）"), ("exit", "落地（Shadowsocks 2022，只供中转）")]),
+            F("protocol", "协议", "select", show={"kind": ["entry"]},
+              choices=lambda: [("vless", "VLESS"), ("trojan", "Trojan"), ("vmess", "VMess"),
+                               ("hysteria", "Hysteria2（UDP，移动网络 / 弱网）")]),
+            F("security", "安全", "select", show={"kind": ["entry"], "protocol": ["vless", "trojan", "vmess"]},
+              choices=lambda: [("reality", "Reality（不用证书，推荐）"), ("tls", "TLS（需要域名证书）"), ("none", "无")]),
+            F("transport", "传输", "select", show={"kind": ["entry"], "protocol": ["vless", "trojan", "vmess"]},
+              choices=lambda: [("tcp", "TCP"), ("xhttp", "XHTTP"), ("ws", "WebSocket"), ("grpc", "gRPC")]),
+            F("port", "端口", "int", help="留空自动分配（Reality / TLS 优先用 443）"),
+            F("tls_sni", "证书域名", help="留空 = 服务器的节点域名", group="TLS",
+              show={"kind": ["entry"], "security": ["tls"]}),
+            F("cert_path", "证书路径", help="留空 = /root/cert/域名/fullchain.pem（一键接入时自动申请的证书）", group="TLS",
+              show={"kind": ["entry"], "security": ["tls"]}),
+            F("key_path", "私钥路径", help="留空 = /root/cert/域名/privkey.pem", group="TLS",
+              show={"kind": ["entry"], "security": ["tls"]}),
+            F("reality_target", "伪装目标", help="留空自动选一个（支持 TLS1.3 + h2 的大站）", group="Reality",
+              show={"kind": ["entry"], "security": ["reality"], "protocol": ["vless", "trojan", "vmess"]}),
+            F("path", "路径 / serviceName", help="留空自动生成随机路径", group="传输",
+              show={"kind": ["entry"], "transport": ["xhttp", "ws", "grpc"], "protocol": ["vless", "trojan", "vmess"]}),
+            F("host", "Host", help="留空 = 节点域名", group="传输",
+              show={"kind": ["entry"], "transport": ["xhttp", "ws"], "protocol": ["vless", "trojan", "vmess"]}),
+            F("ss_method", "加密方式", "select", choices=lambda: SS_METHODS, group="Shadowsocks",
+              show={"kind": ["exit"]}),
+            F("tag", "稳定标签", help="留空自动生成（如 hk-a-reality）；路由规则按它生成，不随端口变化", group="高级"),
+            F("listen", "监听地址", help="留空 = 全部", group="高级"),
+            F("reality_sni", "伪装 SNI", help="留空 = 伪装目标域名", group="高级", show={"security": ["reality"]}),
+            F("reality_private", "Reality 私钥", "secret", help="留空自动生成", group="高级", show={"security": ["reality"]}),
+            F("reality_public", "Reality 公钥", help="自动生成", group="高级", show={"security": ["reality"]}),
+            F("reality_short_id", "Short ID", help="留空自动生成", group="高级", show={"security": ["reality"]}),
+            F("fallback_dest", "回落", help="一般不用填；如 8080 或 127.0.0.1:8080（TCP+TLS）", group="高级",
+              show={"security": ["tls"]}),
+            F("ss_key", "SS 密钥", "secret", help="留空自动生成，长度自动匹配加密方式", group="高级", show={"kind": ["exit"]}),
+            F("client_address", "订阅地址覆盖", help="走 Cloudflare CDN 的线路填 CDN 域名；留空 = 服务器域名", group="高级",
+              show={"kind": ["entry"]}),
+            F("client_port", "订阅端口覆盖", "int", group="高级", show={"kind": ["entry"]}),
+            F("advanced_json", "高级 JSON", "json", help='覆盖 {"settings": {...}, "streamSettings": {...}}；导入的入站会自动带上',
+              group="高级"),
             F("enabled", "启用", "bool", default=True),
         ]},
     "outbounds": {

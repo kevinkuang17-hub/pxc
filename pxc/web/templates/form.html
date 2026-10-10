@@ -1,16 +1,26 @@
 {% extends "base.html" %}
-{% block h1 %}{{ '编辑' if obj.id else '新增' }}{{ R.title }}{% endblock %}
+{% block h1 %}{{ '编辑' if obj.id else '新增' }}{{ R.title }}<script>
+(function(){var f=document.querySelector('form.f');if(!f)return;
+function val(n){var e=f.elements[n];if(!e)return null;if(e.type==='checkbox')return e.checked?'1':'';return e.value}
+function upd(){f.querySelectorAll('[data-show]').forEach(function(r){var c=JSON.parse(r.dataset.show),ok=true;
+  for(var k in c){var v=val(k);if(v!==null&&c[k].indexOf(v)<0)ok=false}r.style.display=ok?'':'none'});
+  f.querySelectorAll('fieldset.grp').forEach(function(fs){var rows=fs.querySelectorAll('.row');var vis=false;
+    rows.forEach(function(r){if(r.style.display!=='none')vis=true});fs.style.display=vis?'':'none'})}
+f.addEventListener('change',upd);upd()})();
+</script>
+{% endblock %}
 {% block body %}
 <form method="post" class="f card">
 {% set ns = namespace(group=None) %}
 {% for f in R.fields %}
   {% set val = form.getlist(f.name) if form and f.type == 'multi' else (form.get(f.name, '') if form and f.type not in ('secret',) else fv(f, obj)) %}
   {% set fg = f.get('group') %}{% if fg != ns.group %}
-    {% if ns.group %}</fieldset>{% endif %}
-    {% if fg %}<fieldset><legend>{{ fg }}</legend>{% endif %}
+    {% if ns.group == '高级' %}</div></details>{% elif ns.group %}</fieldset>{% endif %}
+    {% if fg == '高级' %}<details class="adv"{% if form %} open{% endif %}><summary>高级设置（一般不用改，留空会自动生成）</summary><div>
+    {% elif fg %}<fieldset class="grp"><legend>{{ fg }}</legend>{% endif %}
     {% set ns.group = fg %}
   {% endif %}
-  <div class="row"><label class="l" for="f_{{ f.name }}">{{ f.label }}{% if f.required %} *{% endif %}</label><div>
+  <div class="row"{% if f.show %} data-show='{{ f.show|tojson }}'{% endif %}><label class="l" for="f_{{ f.name }}">{{ f.label }}{% if f.required %} *{% endif %}</label><div>
   {% if f.type == 'bool' %}
     <input type="checkbox" id="f_{{ f.name }}" name="{{ f.name }}" value="1" {% if (form and form.get(f.name)) or (not form and val) %}checked{% endif %}>
   {% elif f.type == 'select' %}
@@ -39,7 +49,7 @@
   {% if f.help %}<div class="help">{{ f.help }}</div>{% endif %}
   </div></div>
 {% endfor %}
-{% if ns.group %}</fieldset>{% endif %}
+{% if ns.group == '高级' %}</div></details>{% elif ns.group %}</fieldset>{% endif %}
 <div class="row"><span></span><div style="display:flex;gap:8px">
   <button class="btn p">保存</button>
   <a class="btn" href="{{ url_for('admin.r_list', res=res) }}">返回</a>
@@ -52,4 +62,13 @@
 <form method="post" action="{{ url_for('admin.inbound_rekey', iid=obj.id) }}" data-confirm="确定重新生成密钥？{{ '用到这条线路的用户需要刷新订阅。' if obj.kind=='entry' else '' }}">
   <button class="btn d">重新生成密钥</button></form>
 {% endif %}
+<script>
+(function(){var f=document.querySelector('form.f');if(!f)return;
+function val(n){var e=f.elements[n];if(!e)return null;if(e.type==='checkbox')return e.checked?'1':'';return e.value}
+function upd(){f.querySelectorAll('[data-show]').forEach(function(r){var c=JSON.parse(r.dataset.show),ok=true;
+  for(var k in c){var v=val(k);if(v!==null&&c[k].indexOf(v)<0)ok=false}r.style.display=ok?'':'none'});
+  f.querySelectorAll('fieldset.grp').forEach(function(fs){var rows=fs.querySelectorAll('.row');var vis=false;
+    rows.forEach(function(r){if(r.style.display!=='none')vis=true});fs.style.display=vis?'':'none'})}
+f.addEventListener('change',upd);upd()})();
+</script>
 {% endblock %}

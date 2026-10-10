@@ -447,8 +447,10 @@ def join_register():
     while s.query(Server).filter_by(name=name).first():
         name, n = f"{base}-{n}", n + 1
     srv = Server(name=name, region=(p.get("region") or "").upper(), domain=p.get("domain") or "",
-                 ip=data.get("public_ip") or auth.client_ip(), panel_url=data["panel_url"], auth_type="password",
+                 ip=data.get("public_ip") or auth.client_ip(), panel_url=data["panel_url"],
                  panel_user=data["user"], panel_pass=crypto.enc(data["password"]), mode="managed",
+                 **({"auth_type": "token", "api_token": crypto.enc(data["api_token"])} if data.get("api_token")
+                    else {"auth_type": "password"}),
                  status="online", note="一键接入 " + now().strftime("%Y-%m-%d %H:%M"))
     s.add(srv)
     s.commit()

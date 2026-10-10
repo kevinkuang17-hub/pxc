@@ -111,3 +111,5 @@ ul.notes{margin:0;padding-left:18px}
 .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
 .tabs a{padding:5px 12px;border-radius:7px;border:1px solid var(--line);color:var(--text)}
 .tabs a.on{border-color:var(--c);color:var(--c)}
+details.adv{border:1px dashed var(--line);border-radius:var(--r);margin:12px 0;padding:6px 14px}
+details.adv>summary{cursor:pointer;color:var(--muted);font-size:13px;padding:4px 0}

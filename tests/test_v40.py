@@ -261,3 +261,48 @@ def test_convert_list_splits_categories():
     from pxc import ruletpl
     out = json.loads(ruletpl.convert_list("payload:\n  - DST-PORT,7844\n  - IP-CIDR,1.1.1.0/24\n  - SRC-PORT,41641\n"))
     assert out["rules"] == [{"port": [7844]}, {"ip_cidr": ["1.1.1.0/24"]}, {"source_port": [41641]}]
+
+
+def test_xui_v3_csrf(world):
+    """3X-UI 3.x：登录和所有 POST 都要 CSRF 令牌，模板接口在 /panel/api/xray/。"""
+    from pxc.importer import import_servers
+    from pxc.models import Server, Session
+    from pxc.sync import push_server, refresh_status
+    for m in (world["hk"], world["sg"]):
+        m.v3 = m.v3_clients = True
+    assert refresh_status(Session().get(Server, world["s_hk"].id)) == "online"
+    rep = import_servers([world["s_sg"].id, world["s_hk"].id])
+    assert not rep["errors"], rep
+    s = Session()
+    srv = s.get(Server, world["s_hk"].id)
+    srv.mode = "managed"
+    s.commit()
+    push_server(srv.id)
+    assert push_server(srv.id, dry_run=True)["ops"] == 0
+    assert any(o["tag"].startswith("px-") for o in world["hk"].tpl["outbounds"])
+
+
+def test_inbound_form_autofill(app):
+    from test_web import login
+    from pxc.models import Inbound, Server, Session
+    c = app.test_client()
+    login(c)
+    srv = Session().query(Server).filter(Server.domain != "").first()
+    html = c.get("/adm1n/r/inbounds/new").get_data(as_text=True)
+    assert "data-show" in html and "高级设置" in html
+    r = c.post("/adm1n/r/inbounds/new", data={"server_id": srv.id, "kind": "entry", "protocol": "vless",
+                                             "security": "tls", "transport": "ws"})
+    assert r.status_code == 302, r.get_data(as_text=True)[:500]
+    inb = Session().query(Inbound).order_by(Inbound.id.desc()).first()
+    dom = srv.domain
+    assert inb.cert_path == f"/root/cert/{dom}/fullchain.pem" and inb.key_path.endswith("privkey.pem")
+    assert inb.port and inb.path.startswith("/") and inb.tag.startswith(srv.name.lower().replace(" ", "-"))
+    r = c.post("/adm1n/r/inbounds/new", data={"server_id": srv.id, "kind": "entry", "protocol": "vless",
+                                             "security": "reality", "transport": "tcp"})
+    assert r.status_code == 302
+    inb = Session().query(Inbound).order_by(Inbound.id.desc()).first()
+    assert inb.reality_target and inb.reality_public and inb.reality_short_id and inb.tag.endswith("reality")
+    r = c.post("/adm1n/r/inbounds/new", data={"server_id": srv.id, "kind": "exit", "protocol": "vless"})
+    assert r.status_code == 302
+    inb = Session().query(Inbound).order_by(Inbound.id.desc()).first()
+    assert inb.protocol == "shadowsocks" and inb.ss_key and inb.ss_method

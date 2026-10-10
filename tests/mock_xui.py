@@ -38,6 +38,7 @@ class MockXui:
         self.installs, self.broken_versions, self.xray_version = [], set(), "25.9.11"             # getOutboundsTraffic 的返回
         self.online_emails = []
         self.client_ip_map = {}
+        self.v3 = False                   # True = 模拟 3X-UI 3.x（CSRF + 新路径）
         self.v3_clients = False           # True = 模拟新版 3X-UI：旧的按入站改用户接口没了，改用 /panel/api/clients/
         self.app = self._make_app()
         self.srv = make_server("127.0.0.1", 0, self.app, threaded=True)
@@ -126,6 +127,15 @@ class MockXui:
 
         @app.before_request
         def guard():
+            if self.v3:     # 3X-UI 3.x：POST 都要带 CSRF 令牌，模板接口挪到 /panel/api/xray/
+                if request.path == b + "/csrf-token":
+                    return ok("csrf-tok")
+                if request.method == "POST" and request.headers.get("X-CSRF-Token") != "csrf-tok":
+                    return ("", 403)
+                if request.path.startswith(b + "/panel/xray/"):
+                    return ("", 404)
+                if request.path == b + "/panel/csrf-token" and authed():
+                    return ok("csrf-tok")
             if request.path in (b + "/login",):
                 return None
             if not authed():
@@ -288,10 +298,12 @@ class MockXui:
             self.xray_state, self.xray_error = ("error", err) if err else ("running", "")
             return ok()
 
+        @app.post(b + "/panel/api/xray/")
         @app.post(b + "/panel/xray/")
         def get_tpl():
             return ok(json.dumps({"xraySetting": self.tpl, "inboundTags": [r["tag"] for r in self.inbounds]}))
 
+        @app.post(b + "/panel/api/xray/update")
         @app.post(b + "/panel/xray/update")
         def save_tpl():
             self.tpl = json.loads(request.form["xraySetting"])
