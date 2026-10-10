@@ -204,6 +204,8 @@ def compute_diff(server, state, remote_rows, tpl):
             if key not in d["clients"]:
                 if server.mode == "observe" and c.get("enable") is False:
                     continue      # 服务器上本来就停用的用户，观察期不算差异；接管后会被清掉
+                if server.mode == "observe" and str(c.get("email") or "").startswith("pxc-probe."):
+                    continue      # 接管期留下的探测账号：观察期不算差异
                 ops.append({"op": "del_client", "tag": tag, "remote_id": row["id"], "key": key,
                             "email": c.get("email")})
                 notes.append(f"入站 {tag} 移除用户 {c.get('email')}")

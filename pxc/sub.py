@@ -77,8 +77,9 @@ def node_of(line):
     srv = inb.server
     if srv.maintenance or srv.status == "offline":
         return None
-    if line.outbound and line.outbound.type in ("exit", "chain") and line.outbound.exit_inbound:
-        es = line.outbound.exit_inbound.server
+    ob = line.effective_outbound                     # 已切到备用落地时看备用落地的状态
+    if ob and ob.type in ("exit", "chain") and ob.exit_inbound:
+        es = ob.exit_inbound.server
         if es.maintenance or es.status == "offline":
             return None
     region = (line.exit_region or srv.region or "").upper()

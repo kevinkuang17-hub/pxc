@@ -132,12 +132,14 @@ EOF
 }
 do_install_xray(){
   need_root
-  local arch z
+  local z tmp
   case "$(uname -m)" in x86_64|amd64) z=Xray-linux-64.zip;; aarch64|arm64) z=Xray-linux-arm64-v8a.zip;; *) red "不支持的架构"; return 1;; esac
   mkdir -p $PXC_HOME/bin
-  curl -fsSL --retry 3 -o /tmp/pxc-xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/$z" || { red "下载 Xray 失败"; return 1; }
-  "$PY" -c 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);z.extract("xray",sys.argv[2])' /tmp/pxc-xray.zip $PXC_HOME/bin && chmod +x $PXC_HOME/bin/xray
-  rm -f /tmp/pxc-xray.zip
+  tmp=$(mktemp -d) || return 1        # 不用固定的 /tmp 文件名（root 写可预测路径有符号链接风险）
+  curl -fsSL --retry 3 -o "$tmp/x.zip" "https://github.com/XTLS/Xray-core/releases/latest/download/$z" || { red "下载 Xray 失败"; rm -rf "$tmp"; return 1; }
+  "$PY" -c 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);z.extract("xray",sys.argv[2])' "$tmp/x.zip" "$tmp" \
+    && install -m 755 "$tmp/xray" $PXC_HOME/bin/xray || { red "解压 Xray 失败"; rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
   green "已安装 $($PXC_HOME/bin/xray version | head -1)（控制台用它经线路实测出口 IP 和解锁）"
 }
 do_uninstall(){
@@ -183,5 +185,5 @@ case "${1:-}" in
   get) cli get "${2:?缺少设置名}";;
   install-xray) do_install_xray;;
   version) cat VERSION;;
-  *) echo "用法：pxc [start|stop|restart|status|log|url|port N|path X|reset-password|reset-2fa|clear-allowlist|cert 域名 令牌|update|rollback|backup|restore 文件|cf-firewall|uninstall|version]";;
+  *) echo "用法：pxc [start|stop|restart|status|log|url|port N|path X|reset-password|reset-2fa|clear-allowlist|cert 域名 令牌|update|rollback|backup|restore 文件|cf-firewall|install-xray|uninstall|version]";;
 esac

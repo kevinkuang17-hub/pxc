@@ -147,7 +147,11 @@ def render_inbound(inb, clients, probe_uuid=None):
     if probe_uuid and inb.kind == "entry" and inb.protocol in ("vless", "vmess", "trojan", "hysteria"):
         # 控制台自己的探测账号：用来经这条线路实测出口 IP 和解锁情况；不占用户名额、不计流量
         key = {"trojan": "password", "hysteria": "auth"}.get(inb.protocol, "id")
-        entry = {key: probe_uuid, "email": f"pxc-probe.{inb.tag}"[:64], "enable": True, "limitIp": 0, "totalGB": 0,
+        email = f"pxc-probe.{inb.tag}"
+        if len(email) > 64:     # 直接截断会让前缀相同的长标签撞成同一个 email（3X-UI 要求 email 全局唯一，推送会失败）
+            import hashlib
+            email = f"pxc-probe.{inb.tag[:45]}.{hashlib.sha1(inb.tag.encode()).hexdigest()[:8]}"
+        entry = {key: probe_uuid, "email": email, "enable": True, "limitIp": 0, "totalGB": 0,
                  "expiryTime": 0, "subId": "", "tgId": "", "reset": 0}
         if inb.protocol == "vless":
             entry["flow"] = "xtls-rprx-vision" if vision_ok else ""

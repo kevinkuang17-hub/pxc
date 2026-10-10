@@ -11,7 +11,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 from . import events
-from .models import CheckResult, Inbound, Line, ProbeLog, Session, audit, get_setting, now
+from .models import CheckResult, Inbound, Line, ProbeLog, Session, audit, get_setting, now, set_setting
 
 FAIL_LIMIT = 3
 
@@ -168,30 +168,35 @@ def latency_series(line_id, hours=24):
 
 # ---------------- 落地故障自动切换（F12） ----------------
 
-def tcp_probe(host, port, timeout=5):
-    t0 = time.perf_counter()
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True, int((time.perf_counter() - t0) * 1000), ""
-    except Exception as e:
-        return False, None, f"{e.__class__.__name__}: {e}"[:200]
+def exit_tcp_probe(host, port, timeout=5):
+    # 注意：不能叫 tcp_probe，否则覆盖上面线路探测用的 tcp_probe(host, port, sni)（返回 5 元组）
+    return tcp_probe(host, port, timeout=timeout)[:3]
 
 
 def probe_exits(prober=None):
     """测每个落地（SS 2022 端口）能不能连上：连续 3 次失败 → 落地故障，配了备用出站的线路自动切过去；
     连续 3 次成功 → 落地恢复，切回主落地。切换后自动推送到入口服务器。"""
     from .sync import enqueue_push
-    prober = prober or tcp_probe
+    prober = prober or exit_tcp_probe
     s = Session()
-    exits = [i for i in s.query(Inbound).filter_by(kind="exit", enabled=True).all() if not i.server.maintenance]
-    if not exits:
+    all_exits = s.query(Inbound).filter_by(kind="exit").all()
+    exits = [i for i in all_exits if i.enabled and not i.server.maintenance]
+    if not exits and not s.query(Line).filter(Line.using_backup.is_(True)).first():
         return {"exits": 0, "switched": [], "restored": []}
-    res = {i.id: prober(i.server.ip or i.server.domain, i.port) for i in exits}
+    # 并发测：落地挂了每个要等满超时，顺序测会把 worker 的每分钟循环拖住
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        res = dict(zip([i.id for i in exits],
+                       ex.map(lambda a: prober(*a), [(i.server.ip or i.server.domain, i.port) for i in exits])))
     failed = sum(1 for r in res.values() if not r[0])
     if len(exits) >= 2 and failed == len(exits):
-        events.emit("probe_suppressed", {"failed": failed, "total": len(exits),
-                                         "note": "所有落地同时连不上，可能是控制台网络问题，暂不切换"})
+        if get_setting("exit_probe_suppressed", "0") != "1":    # 只在刚进入这种状态时告警一次，别每分钟刷屏
+            set_setting("exit_probe_suppressed", "1")
+            events.emit("probe_suppressed", {"failed": failed, "total": len(exits),
+                                             "note": "所有落地同时连不上，可能是控制台网络问题，暂不切换"})
         return {"exits": len(exits), "switched": [], "restored": [], "suppressed": True}
+    if get_setting("exit_probe_suppressed", "0") == "1":
+        set_setting("exit_probe_suppressed", "0")
+    went_down = []
     for i in exits:
         ok, ms, err = res[i.id]
         st = i.exit_streak or 0
@@ -200,12 +205,15 @@ def probe_exits(prober=None):
         if st >= FAIL_LIMIT and not i.exit_down:
             i.exit_down = True
             audit("exit.down", i.tag, after=err)
+            went_down.append(f"{i.tag}（{i.server.name}:{i.port}）{err}")
         elif st <= -FAIL_LIMIT and i.exit_down:
             i.exit_down = False
             audit("exit.up", i.tag)
         i.health_note = (f"{ms}ms" if ok else err)
     s.flush()
     down = {i.id for i in exits if i.exit_down}
+    # 维护中 / 停用的落地不参与探测：不因此切换，但也不切回去（否则把坏掉的主落地设为维护后线路会被切回，随后从订阅消失）
+    unavailable = down | {i.id for i in all_exits if not i.enabled or i.server.maintenance}
     switched, restored, servers = [], [], set()
 
     def exit_ids(ob):
@@ -215,25 +223,32 @@ def probe_exits(prober=None):
             return {ob.exit_inbound_id}
         return set()
 
-    for l in s.query(Line).filter(Line.backup_outbound_id.isnot(None)).all():
+    for l in s.query(Line).filter((Line.backup_outbound_id.isnot(None)) | (Line.using_backup.is_(True))).all():
         primary_bad = bool(exit_ids(l.outbound) & down)
         backup_bad = bool(exit_ids(l.backup_outbound) & down)
-        if primary_bad and not l.using_backup and not backup_bad:
+        if l.using_backup and l.backup_outbound is None:       # 备用被去掉（API / 直接改库）：清掉残留标记
+            l.using_backup = False
+            restored.append(l)
+        elif primary_bad and not l.using_backup and not backup_bad and l.backup_outbound is not None \
+                and l.entry and l.entry.server.mode == "managed":
+            # 观察期的服务器不推送：切了也不生效，只会让订阅 / 比对与服务器实际出口不一致
             l.using_backup = True
             switched.append(l)
-        elif not primary_bad and l.using_backup:
+        elif l.using_backup and not (exit_ids(l.outbound) & unavailable):
             l.using_backup = False
             restored.append(l)
         else:
             continue
         servers.add(l.entry.server_id)
     s.commit()
+    if went_down:     # 没配备用的线路也要有告警，不能只写审计日志
+        events.emit("exit_down", {"exits": "；".join(went_down)})
     if switched:
         audit("line.failover", ",".join(l.name for l in switched))
         events.emit("exit_failover", {"lines": ", ".join(f"{l.name} → {l.backup_outbound.tag}" for l in switched)})
     if restored:
         audit("line.restore", ",".join(l.name for l in restored))
-        events.emit("exit_restore", {"lines": ", ".join(f"{l.name} → {l.outbound.tag}" for l in restored)})
+        events.emit("exit_restore", {"lines": ", ".join(f"{l.name} → {l.outbound.tag if l.outbound else '直出'}" for l in restored)})
     if servers:
         enqueue_push(servers, reason="落地故障自动切换" if switched else "落地恢复，切回主落地")
     return {"exits": len(exits), "switched": [l.name for l in switched], "restored": [l.name for l in restored]}

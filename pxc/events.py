@@ -20,7 +20,7 @@ LABELS = {
     "line_down": "线路连续探测失败（已从订阅摘除）", "line_up": "线路恢复", "reality_target": "Reality 伪装目标不可用",
     "consistency": "域名/IP/证书/SNI 不一致", "ruleset_review": "规则集变化过大，等待确认",
     "probe_suppressed": "大部分线路同时探测失败（已暂停自动摘除）",
-    "exit_failover": "落地故障，已切到备用落地", "exit_restore": "落地恢复，已切回主落地",
+    "exit_down": "落地连续探测失败", "exit_failover": "落地故障，已切到备用落地", "exit_restore": "落地恢复，已切回主落地",
     "exit_ip": "线路出口 IP 与预期不符", "unlock_change": "解锁情况变化",
 }
 

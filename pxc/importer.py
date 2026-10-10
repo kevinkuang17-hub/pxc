@@ -8,7 +8,8 @@ import json
 import re
 
 from . import crypto
-from .models import (Client, ClientEmail, ClientLineOverride, Inbound, Line, Outbound, Server, Session, audit)
+from .models import (Client, ClientEmail, ClientLineOverride, Inbound, Line, Outbound, Server, Session, audit,
+                     get_setting)
 from .state import render_inbound, slug, xui_tag
 from .sync import _SAME, client_for, residual
 
@@ -132,6 +133,8 @@ def _import_clients(server, inb, line, clients, stats, report):
         key = c.get({"trojan": "password", "hysteria": "auth"}.get(inb.protocol, "id"))
         if not key:
             continue
+        if str(c.get("email") or "").startswith("pxc-probe.") or key == get_setting("probe_uuid", ""):
+            continue              # 控制台自己的探测账号，不能导入成用户（否则探测 UUID 会出现在订阅里）
         sub_id = c.get("subId") or ""
         cl = None
         if sub_id:

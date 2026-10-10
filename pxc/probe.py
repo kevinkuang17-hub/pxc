@@ -13,6 +13,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 
 import requests
@@ -92,27 +93,49 @@ class XrayRunner:
         self.tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         json.dump(cfg, self.tmp)
         self.tmp.close()
-        self.proc = subprocess.Popen([binp, "run", "-c", self.tmp.name], stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.PIPE)
-        for _ in range(50):
-            try:
-                with socket.create_connection(("127.0.0.1", self.port), timeout=0.2):
-                    break
-            except OSError:
-                if self.proc.poll() is not None:
-                    err = (self.proc.stderr.read() or b"").decode(errors="ignore")[-300:]
-                    raise RuntimeError(f"xray 启动失败：{err}")
-                time.sleep(0.1)
+        # stderr 写到临时文件而不是 PIPE：PIPE 没人读，日志多了会写满缓冲区把 xray 卡住
+        self.err = tempfile.TemporaryFile()
+        self.proc = None
+        try:
+            self.proc = subprocess.Popen([binp, "run", "-c", self.tmp.name], stdout=subprocess.DEVNULL,
+                                         stderr=self.err)
+            for _ in range(50):
+                try:
+                    with socket.create_connection(("127.0.0.1", self.port), timeout=0.2):
+                        break
+                except OSError:
+                    if self.proc.poll() is not None:
+                        self.err.seek(0)
+                        err = self.err.read().decode(errors="ignore")[-300:]
+                        raise RuntimeError(f"xray 启动失败：{err}")
+                    time.sleep(0.1)
+            else:
+                raise RuntimeError("xray 启动超时（5 秒内本地端口没有监听）")
+        except BaseException:
+            self.__exit__()
+            raise
         proxy = f"socks5h://127.0.0.1:{self.port}"
         return {"http": proxy, "https": proxy}
 
     def __exit__(self, *a):
+        if self.proc is not None and self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=5)
+            except Exception:
+                self.proc.kill()
+                try:
+                    self.proc.wait(timeout=5)
+                except Exception:
+                    pass
         try:
-            self.proc.terminate()
-            self.proc.wait(timeout=5)
+            self.err.close()
         except Exception:
-            self.proc.kill()
-        os.unlink(self.tmp.name)
+            pass
+        try:
+            os.unlink(self.tmp.name)
+        except OSError:
+            pass
 
 
 # ---------------- 检测项 ----------------
@@ -216,8 +239,20 @@ def _put(target, kind, ok, detail):
     return prev
 
 
+_run_lock = threading.Lock()
+
+
 def run_all(runner_cls=XrayRunner, get=_get, line_ids=None):
     """逐条线路实测，只测“控制台接管”的服务器上的线路（观察期没有探测账号）。"""
+    if not _run_lock.acquire(blocking=False):      # 连点按钮 / 与定时任务撞车：同一进程里只跑一份
+        return {"skipped": "上一轮经线路实测还没结束"}
+    try:
+        return _run_all(runner_cls, get, line_ids)
+    finally:
+        _run_lock.release()
+
+
+def _run_all(runner_cls, get, line_ids):
     if runner_cls is XrayRunner and not xray_bin():
         return {"skipped": "控制台上没有 xray 程序，执行 pxc install-xray 后再测"}
     if not probe_uuid():

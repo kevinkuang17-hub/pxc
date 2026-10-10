@@ -126,6 +126,8 @@ def main():
     init_engine()
     from .rules import seed_defaults
     _safe(seed_defaults)                         # 首次运行建好常用规则集和方案（不覆盖已有的）
+    from .state import probe_uuid
+    _safe(probe_uuid)                            # 先生成探测账号：免得并发推送线程各自生成、写设置时主键冲突
     state = {"reconcile": time.time() - 240,     # 启动 1 分钟后做第一次比对
              "hourly": time.time() - 3540,       # 启动 1 分钟后做第一次核对 / 拉规则
              "chain": time.time() - 3 * 3600 + 600}   # 启动 10 分钟后做第一次经线路实测
