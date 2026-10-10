@@ -1,0 +1,23 @@
+# 每天把 Aethersailor 分流规则转换成 3X-UI 能直接用的远程 Clash 路由（rules/3x-ui/*.yaml），有变化才提交
+name: rules
+on:
+  schedule:
+    - cron: "17 20 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests PyYAML
+      - run: python tools/gen_3xui_rules.py
+      - name: 提交
+        run: |
+          git config user.name "rules-bot"
+          git config user.email "rules-bot@users.noreply.github.com"
+          git add rules/3x-ui
+          git diff --cached --quiet || { git commit -m "chore(rules): 同步 Aethersailor 规则"; git push; }

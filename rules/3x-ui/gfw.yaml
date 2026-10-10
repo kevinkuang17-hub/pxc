@@ -1,0 +1,25 @@
+# Aethersailor GFW 版 —— 3X-UI 3.x 远程 Clash 路由（自动生成，请勿手改）
+# 来源：https://raw.githubusercontent.com/Aethersailor/Custom_OpenClash_Rules/main/cfg/Custom_Clash_GFW.ini（Aethersailor/Custom_OpenClash_Rules，CC BY-SA 4.0）
+proxy-groups:
+- name: 🚀 手动选择
+  type: select
+  proxies:
+  - ♻️ 自动选择
+  include-all-proxies: true
+- name: ♻️ 自动选择
+  type: url-test
+  include-all-proxies: true
+  url: https://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+- name: 🎯 全球直连
+  type: select
+  proxies:
+  - DIRECT
+rule-providers: {}
+rules:
+- GEOSITE,gfw,🚀 手动选择
+- GEOIP,telegram,🚀 手动选择,no-resolve
+- GEOIP,facebook,🚀 手动选择,no-resolve
+- GEOIP,twitter,🚀 手动选择,no-resolve
+- MATCH,🎯 全球直连
