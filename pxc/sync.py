@@ -111,10 +111,36 @@ def _is_px_observatory(obs):
     return bool(obs) and all(str(x).startswith(PX) for x in obs.get("subjectSelector") or [])
 
 
+def _is_app(x, key="tag"):
+    return str(x.get(key, "")).startswith(PX + "app-")
+
+
+def _apply_app(state, tpl, absorbed=None):
+    """按应用统计的出站要和这台服务器的默认出口一模一样（复制 settings 等），出口才不会变；
+    默认出口不是 freedom（比如 WARP）时这台服务器不做按应用统计。"""
+    if not any(_is_app(o) for o in state.get("outbounds") or []):
+        return state
+    drop = set((absorbed or {}).get("outbounds", []))
+    outs = [o for o in (tpl or {}).get("outbounds") or []
+            if not str(o.get("tag", "")).startswith(PX) and o.get("tag") not in drop]
+    default = outs[0] if outs else {"protocol": "freedom"}
+    st = dict(state)
+    if default.get("protocol") != "freedom":
+        st["outbounds"] = [o for o in state["outbounds"] if not _is_app(o)]
+        st["rules"] = [r for r in state["rules"] if not _is_app(r, "ruleTag")]
+        return st
+    keys = ("settings", "streamSettings", "sendThrough", "proxySettings", "mux")
+    st["outbounds"] = [dict({"tag": o["tag"], "protocol": "freedom"},
+                            **{k: copy.deepcopy(default[k]) for k in keys if k in default}) if _is_app(o) else o
+                       for o in state["outbounds"]]
+    return st
+
+
 def build_template(tpl, state, absorbed=None):
     """保留模板里非控制台管理的部分，替换 px- 出站 / 负载组 / 规则。"""
     tpl = copy.deepcopy(tpl or {})
     absorbed = absorbed or {}
+    state = _apply_app(state, tpl, absorbed)
     drop_out = set(absorbed.get("outbounds", []))
     drop_rules = [json.dumps(r, sort_keys=True) for r in absorbed.get("rules", [])]
     # 被吸收的旧出站如果还被其它（非吸收）规则 / 负载组 / 链式上一跳引用，就保留，避免流量悄悄改走默认出口
@@ -145,7 +171,9 @@ def build_template(tpl, state, absorbed=None):
     for i, r in enumerate(rules):
         if "api" in (r.get("inboundTag") or []) or r.get("outboundTag") == "api":
             pos = i + 1
-    routing["rules"] = rules[:pos] + copy.deepcopy(state["rules"]) + rules[pos:]
+    main = [r for r in state["rules"] if not _is_app(r, "ruleTag")]
+    apps = [r for r in state["rules"] if _is_app(r, "ruleTag")]
+    routing["rules"] = rules[:pos] + copy.deepcopy(main) + rules[pos:] + copy.deepcopy(apps)
     bal = [b for b in routing.get("balancers") or [] if not str(b.get("tag", "")).startswith(PX)]
     if bal or state["balancers"]:
         routing["balancers"] = bal + copy.deepcopy(state["balancers"])
@@ -155,7 +183,20 @@ def build_template(tpl, state, absorbed=None):
         tpl["observatory"] = copy.deepcopy(state["observatory"])
     elif _is_px_observatory(tpl.get("observatory")):
         tpl.pop("observatory")
+    if _wants_outbound_stats(state):
+        tpl.setdefault("stats", {})
+        system = tpl.setdefault("policy", {}).setdefault("system", {})
+        system["statsOutboundUplink"] = system["statsOutboundDownlink"] = True
     return tpl
+
+
+def _wants_outbound_stats(state):
+    return any(str(o.get("tag", "")).startswith(PX + "app-") for o in state.get("outbounds") or [])
+
+
+def _has_outbound_stats(tpl):
+    system = ((tpl or {}).get("policy") or {}).get("system") or {}
+    return bool(system.get("statsOutboundUplink") and system.get("statsOutboundDownlink"))
 
 
 def _norm(x):
@@ -230,10 +271,12 @@ def compute_diff(server, state, remote_rows, tpl):
             notes.insert(0, "出口不一致：" + "；".join(
                 f"{k} 应走 {_sig_text(want_eff.get(k))}，实际走 {_sig_text(have_eff.get(k))}" for k in bad[:8]))
         return ops, notes
-    want_parts = _norm({"outbounds": state["outbounds"], "balancers": state["balancers"], "rules": state["rules"],
-                        "observatory": state.get("observatory")})
+    st2 = _apply_app(state, tpl, absorbed)
+    want_parts = _norm({"outbounds": st2["outbounds"], "balancers": st2["balancers"], "rules": st2["rules"],
+                        "observatory": st2.get("observatory")})
     have_parts = _norm(managed_template_parts(tpl))
-    if want_parts != have_parts or _absorbed_present(tpl, absorbed):
+    if want_parts != have_parts or _absorbed_present(tpl, absorbed) or \
+            (_wants_outbound_stats(st2) and not _has_outbound_stats(tpl)):
         ops.insert(0, {"op": "template"})
         notes.insert(0, _template_note(want_parts, have_parts))
     return ops, notes
@@ -336,6 +379,8 @@ def push_server(server_id, dry_run=False, reason=""):
         server.last_diff_count = len(ops)
         server.last_diff_json = json.dumps(notes, ensure_ascii=False)
         server.status, server.last_seen_at = "online", now()
+        # 记下服务器上的实际配置（内容没变不记），在面板上手动改过也能在“配置历史”里看到
+        record_version(server, rows, tpl, "巡检记录" if not ops else "巡检记录（与控制台有差异）")
         s.commit()
         if dry_run or not ops:
             return {"ops": len(ops), "notes": notes, "applied": False}
@@ -406,6 +451,7 @@ def push_server(server_id, dry_run=False, reason=""):
             raise PushError("推送后仍有差异：" + "；".join(notes2[:5]))
         if tpl_changed:
             s.add(TemplateBackup(server_id=server.id, content=json.dumps(tpl2, ensure_ascii=False), good=True))
+        record_version(server, rows2, tpl2, reason)
         server.last_sync_at, server.last_sync_result, server.last_error = now(), "ok", ""
         server.last_diff_count, server.last_diff_json = 0, "[]"
         server.fail_streak = 0
@@ -420,6 +466,86 @@ def push_server(server_id, dry_run=False, reason=""):
         raise
     finally:
         lock.release()
+
+
+# ---------------- 配置版本 ----------------
+
+SECRET_KEYS = {"password", "pass", "privatekey", "id", "auth", "psk", "secretkey", "seed", "key", "presharedkey",
+               "mldsa65seed", "decryption", "certificate", "shortids", "token", "secret"}
+
+
+def _is_secret(k):
+    k = str(k).lower()
+    return k in SECRET_KEYS or k.endswith(("key", "seed", "password", "secret", "token"))
+
+
+def _mask_val(v):
+    if isinstance(v, str):
+        return v if v in ("", "none") else "***" + v[-4:]
+    if isinstance(v, list):
+        return [_mask_val(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _mask_val(x) for k, x in v.items()}
+    return v
+
+
+def _mask(x):
+    if isinstance(x, dict):
+        return {k: (_mask_val(v) if _is_secret(k) else _mask(v)) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_mask(v) for v in x]
+    return x
+
+
+def config_view(rows, tpl):
+    """给人看的配置：入站（用户只列名字）+ 模板（出站、路由、负载组）。密钥只留后 4 位。"""
+    inbs = {}
+    for r in sorted(rows, key=lambda r: r.get("port") or 0):
+        st = r.get("settings") or {}
+        clients = sorted(c.get("email", "") for c in st.get("clients") or [])
+        core = {k: v for k, v in st.items() if k != "clients"}
+        inbs[f"{r.get('remark')} :{r.get('port')}"] = _mask({
+            "protocol": r.get("protocol"), "enable": r.get("enable", True), "settings": core,
+            "streamSettings": r.get("streamSettings") or {}, "clients": clients})
+    t = tpl or {}
+    routing = t.get("routing") or {}
+    return {"inbounds": inbs,
+            "template": _mask({"outbounds": t.get("outbounds") or [], "rules": routing.get("rules") or [],
+                               "balancers": routing.get("balancers") or [], "observatory": t.get("observatory"),
+                               "policy": t.get("policy")})}
+
+
+def record_version(server, rows, tpl, reason=""):
+    from .models import ConfigVersion
+    import hashlib
+    s = Session()
+    content = json.dumps(config_view(rows, tpl), ensure_ascii=False, indent=1, sort_keys=True)
+    h = hashlib.sha256(content.encode()).hexdigest()[:16]
+    last = s.query(ConfigVersion).filter_by(server_id=server.id).order_by(ConfigVersion.id.desc()).first()
+    if last and last.hash == h:
+        return None
+    v = ConfigVersion(server_id=server.id, hash=h, reason=(reason or "")[:255], content=content)
+    s.add(v)
+    s.flush()
+    keep = [x.id for x in s.query(ConfigVersion.id).filter_by(server_id=server.id)
+            .order_by(ConfigVersion.id.desc()).limit(100)]
+    s.query(ConfigVersion).filter(ConfigVersion.server_id == server.id, ConfigVersion.id.notin_(keep)) \
+        .delete(synchronize_session=False)
+    return v
+
+
+def diff_versions(old, new):
+    """返回 [(类型, 文本)]，类型 = add / del / ctx / hunk。"""
+    import difflib
+    a = (old.content if old else "").splitlines()
+    b = new.content.splitlines()
+    out = []
+    for ln in difflib.unified_diff(a, b, lineterm="", n=3):
+        if ln.startswith(("---", "+++")):
+            continue
+        kind = "hunk" if ln.startswith("@@") else "add" if ln.startswith("+") else "del" if ln.startswith("-") else "ctx"
+        out.append((kind, ln))
+    return out
 
 
 # ---------------- 任务队列 ----------------
@@ -548,7 +674,8 @@ def reconcile_all():
         try:
             res = push_server(srv.id, dry_run=True, reason="定时比对")
             report[srv.name] = res["ops"]
-            if res["ops"] and srv.mode == "managed":
+            # 连续推送失败（比如新配置让 Xray 起不来、已回滚）就不再自动重试，免得反复重启 Xray；改配置或手动推送会重新开始
+            if res["ops"] and srv.mode == "managed" and (srv.fail_streak or 0) < 3:
                 audit("auto_fix", srv.name, after=res["notes"])
                 enqueue_push([srv.id], reason=f"定时比对发现 {res['ops']} 项差异")
         except Exception as e:

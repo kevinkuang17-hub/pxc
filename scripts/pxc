@@ -70,8 +70,11 @@ do_restore(){
 do_update(){
   need_root
   local repo="${PXC_REPO:-}"
-  yellow "从 GitHub Release 升级（$repo），升级前会自动备份数据库"
-  curl -fsSL "https://github.com/$repo/releases/latest/download/install.sh" -o /tmp/pxc-install.sh || { red "下载失败"; return 1; }
+  case "$repo" in YOUR_GITHUB/*|"") repo=kevinkuang19009-coder/pxc ;; esac
+  yellow "从 GitHub 升级（$repo），升级前会自动完整备份，数据不会被覆盖"
+  curl -fsSL "https://github.com/$repo/releases/latest/download/install.sh" -o /tmp/pxc-install.sh 2>/dev/null \
+    || curl -fsSL "https://raw.githubusercontent.com/$repo/main/scripts/install.sh" -o /tmp/pxc-install.sh \
+    || { red "下载失败"; return 1; }
   PXC_REPO="$repo" bash /tmp/pxc-install.sh
 }
 do_rollback(){

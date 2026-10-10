@@ -1,0 +1,28 @@
+# 用法（在这个目录里）：
+#   1. cp docker/env.example .env，把 PXC_LOGIN_PATH 改成一串随机字母
+#   2. docker compose up -d --build
+#   3. docker compose exec web python -m pxc.cli create-admin admin      # 打印初始账号密码
+# 数据都在 ./data（数据库、加密密钥、品牌图片），升级只需 git pull && docker compose up -d --build，数据不动。
+services:
+  web:
+    build: .
+    image: pxc:local
+    restart: always
+    env_file: .env
+    environment:
+      PXC_ROLE: console
+    ports:
+      - "${PXC_PORT:-54321}:54321"
+    volumes:
+      - ./data:/data
+  worker:
+    image: pxc:local
+    restart: always
+    env_file: .env
+    environment:
+      PXC_ROLE: console
+    command: ["python", "-m", "pxc.worker"]
+    volumes:
+      - ./data:/data
+    depends_on:
+      - web

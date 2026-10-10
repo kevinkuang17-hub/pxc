@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block h1 %}没有权限{% endblock %}{% block body %}
+<div class="card" style="max-width:520px">
+  <p>你的账号是<b>{{ {'super':'超级管理员','ops':'运维','support':'只读客服'}.get(admin_user.role or 'super') }}</b>，不能打开这个页面或做这个操作。</p>
+  <p class="muted small">需要的话请联系超级管理员调整角色。</p>
+  <a class="btn" href="{{ url_for('admin.dash') }}">回到概览</a>
+</div>{% endblock %}

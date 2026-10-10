@@ -36,7 +36,8 @@ def changed(reason):
 
 @bp.before_request
 def _guard():
-    if request.endpoint in ("admin.login", "admin.second_factor", "admin.sso", "admin.static_brand"):
+    if request.endpoint in ("admin.login", "admin.second_factor", "admin.sso", "admin.static_brand",
+                            "admin.passkey_auth_options", "admin.passkey_auth_verify"):
         if not auth.ip_allowed():
             abort(404)
         return None
@@ -88,7 +89,10 @@ def login():
         s = Session()
         u = s.query(Admin).filter_by(username=request.form.get("username", "").strip()).first()
         ip = auth.client_ip()
-        if u and auth.is_locked(u):
+        if u and u.enabled is False:
+            auth.register_failure(None, ip, "disabled")
+            err = "账号或密码错误"
+        elif u and auth.is_locked(u):
             err = "错误次数过多，账号已锁定 15 分钟"
         elif not u or not auth.check_password_hash(u.pass_hash, request.form.get("password", "")):
             auth.register_failure(u, ip, "password")
@@ -111,6 +115,9 @@ def second_factor():
         return redirect(url_for("admin.login"))
     s = Session()
     u = s.get(Admin, uid)
+    if not u or u.enabled is False:
+        session.clear()
+        return redirect(url_for("admin.login"))
     err = None
     if request.method == "POST":
         if auth.is_locked(u):
@@ -125,7 +132,9 @@ def second_factor():
         else:
             auth.register_failure(u, auth.client_ip(), "totp")
             err = "验证码不正确"
-    return render_template("verify.html", err=err, allow_trust=get_setting("allow_trusted_device", "1") == "1")
+    from .team import has_passkey
+    return render_template("verify.html", err=err, allow_trust=get_setting("allow_trusted_device", "1") == "1",
+                           passkey=has_passkey(u.id))
 
 
 @bp.route("/sso")
@@ -153,19 +162,29 @@ def totp_setup():
         return redirect(url_for("admin.dash"))
     if a.totp_bound and auth.needs_reauth():
         return redirect(url_for("admin.reauth", next=request.full_path))
-    codes = None
+    rebind = bool(a.totp_bound)
     if request.method == "POST":
-        if auth.pyotp.TOTP(crypto.dec(a.totp_secret)).verify(request.form.get("code", ""), valid_window=1):
+        # 重新绑定时，新密钥先放在会话里，验证通过才替换；中途放弃旧验证器照常能用
+        sec = session.get("totp_pending") if rebind else crypto.dec(a.totp_secret)
+        if sec and auth.pyotp.TOTP(sec).verify(request.form.get("code", ""), valid_window=1):
+            if rebind:
+                a.totp_secret = crypto.enc(sec)
+                session.pop("totp_pending", None)
             a.totp_bound = True
             Session().commit()
             codes = auth.gen_backup_codes(a)
-            audit("totp_bind", a.username, operator=a.username)
+            audit("totp_rebind" if rebind else "totp_bind", a.username, operator=a.username)
             return render_template("totp_done.html", codes=codes)
         flash("验证码不对，请用手机上最新的 6 位数字再试一次", "error")
-    elif not a.totp_secret or request.args.get("rebind"):
+    elif rebind:
+        session["totp_pending"] = auth.pyotp.random_base32()
+    elif not a.totp_secret:
         auth.new_totp_secret(a)
-    uri = auth.totp_uri(a)
-    return render_template("totp_setup.html", qr=qr_svg(uri), secret=crypto.dec(a.totp_secret))
+    sec = session.get("totp_pending") if rebind else crypto.dec(a.totp_secret)
+    if not sec:
+        return redirect(url_for("admin.totp_setup", rebind=1))
+    uri = auth.pyotp.TOTP(sec).provisioning_uri(name=a.username, issuer_name=get_setting("site_name", "Console"))
+    return render_template("totp_setup.html", qr=qr_svg(uri), secret=sec)
 
 
 @bp.route("/reauth", methods=["GET", "POST"])
@@ -174,12 +193,18 @@ def reauth():
     if not nxt.startswith("/") or nxt.startswith("//") or nxt.startswith("/\\"):
         nxt = url_for("admin.dash")
     if request.method == "POST":
-        if auth.check_second_factor(g.admin, request.form.get("code")):
+        if auth.is_locked(g.admin):
+            flash("错误次数过多，已锁定 15 分钟", "error")
+        elif auth.check_second_factor(g.admin, request.form.get("code")):
             auth.mark_reauth()
             return redirect(nxt)
-        auth.register_failure(g.admin, auth.client_ip(), "reauth")
-        flash("验证码不正确", "error")
-    return render_template("reauth.html", nxt=nxt)
+        else:
+            auth.register_failure(g.admin, auth.client_ip(), "reauth")
+            flash("验证码不正确", "error")
+        from .team import has_passkey
+        return render_template("reauth.html", nxt=nxt, passkey=has_passkey(g.admin.id))
+    from .team import has_passkey
+    return render_template("reauth.html", nxt=nxt, passkey=has_passkey(g.admin.id))
 
 
 def sensitive():
@@ -703,14 +728,18 @@ def audit_log():
 # ======================= 设置 =======================
 
 SETTING_KEYS = ["site_name", "login_slogan", "footer_text", "theme_color", "sub_public_url", "sub_update_hours",
-                "webhook_url", "tg_bot_token", "tg_chat_id", "admin_ip_allowlist", "allow_trusted_device", "tz_offset"]
+                "webhook_url", "tg_bot_token", "tg_chat_id", "admin_ip_allowlist", "allow_trusted_device", "tz_offset",
+                "app_stats", "ops_report", "ops_report_hour", "sub_leak_reset", "sub_ip_limit", "spike_multiple",
+                "spike_min_gb"]
+BOOL_SETTINGS = {"allow_trusted_device", "app_stats", "sub_leak_reset"}
 
 
 @bp.route("/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "POST":
+        app_before = get_setting("app_stats", "0")
         for k in SETTING_KEYS:
-            if k == "allow_trusted_device":
+            if k in BOOL_SETTINGS:
                 set_setting(k, "1" if request.form.get(k) else "0")
             elif k in request.form:
                 v = request.form.get(k, "").strip()
@@ -740,6 +769,8 @@ def settings():
                     if os.path.splitext(old)[0] == kind:
                         os.remove(os.path.join(brand_dir(), old))
         audit("settings", "settings", operator=g.admin.username)
+        if get_setting("app_stats", "0") != app_before:
+            changed("按应用统计流量开关变化")       # 给接管中的服务器加 / 去掉 px-app-* 出站和规则
         if subs.provider:
             subs.provider.invalidate()
         flash("设置已保存", "ok")

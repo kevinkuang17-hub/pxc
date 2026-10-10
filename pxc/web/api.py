@@ -315,6 +315,44 @@ def ruleset_raw(rid):
     return jsonify({"content": rs.content or "", "hash": rs.hash, "version": rs.version})
 
 
+# ---------- 国内探针（路由器） ----------
+
+def _probe_auth():
+    from .. import isp_probe
+    h = request.headers.get("Authorization", "")
+    p = isp_probe.by_token(h[7:].strip()) if h.startswith("Bearer ") else None
+    if not p:
+        abort(404)
+    return p
+
+
+@internal.get("/probe/targets")
+def probe_targets():
+    from .. import isp_probe
+    _probe_auth()
+    return Response(isp_probe.targets(), content_type="text/plain")
+
+
+@internal.post("/probe/report")
+def probe_report():
+    from .. import isp_probe
+    p = _probe_auth()
+    n = isp_probe.report(p, request.get_data(as_text=True)[:200000], auth.client_ip())
+    isp_probe.analyze()
+    return jsonify({"ok": True, "received": n})
+
+
+@internal.get("/p/<tok>")
+def probe_install(tok):
+    from .. import isp_probe
+    p = isp_probe.by_token(tok)
+    if not p:
+        abort(404)
+    console = get_setting("console_probe_url", "") or get_setting("console_node_url", "") or request.host_url
+    pre = f"PXC_CONSOLE={_shq(console.rstrip('/'))}\nPXC_TOKEN={_shq(tok)}\n"
+    return Response(_script("probe-agent.sh").replace("#__PRESET__", pre, 1), content_type="text/plain")
+
+
 def _use_token(tok, purpose, consume=False):
     s = Session()
     row = s.get(OneTimeToken, auth.sha(tok))

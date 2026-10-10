@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block h1 %}我的账号{% endblock %}{% block body %}
+<div class="card"><h2>{{ admin_user.username }} · {{ role }}</h2>
+<p class="small"><a href="{{ url_for('admin.totp_setup', rebind=1) }}">重新绑定动态验证码</a></p></div>
+<div class="card"><h2>通行密钥（Passkey）</h2>
+<p class="muted small">用手机指纹 / 面容或电脑的 Windows Hello、Touch ID 代替输入 6 位动态码，登录第二步和敏感操作都能用。动态码仍然保留作备用。</p>
+{% if not secure %}<p class="tag warn" style="display:inline-block">浏览器只允许在 HTTPS 地址上使用通行密钥。现在是 {{ request.scheme }}://{{ request.host }}，请用带证书的域名打开控制台后再添加。</p>
+{% elif not webauthn %}<p class="tag warn" style="display:inline-block">控制台缺少 webauthn 组件，执行 pxc update 后再试。</p>{% endif %}
+<div class="tbl"><table><thead><tr><th>名称</th><th>添加时间</th><th>最近使用</th><th></th></tr></thead><tbody>
+{% for k in keys %}<tr><td>{{ k.name }}</td><td>{{ fmt_dt(k.created_at) }}</td><td>{{ fmt_dt(k.last_used_at) }}</td>
+<td><form method="post" data-confirm="删除通行密钥“{{ k.name }}”？"><input type="hidden" name="act" value="pk_delete"><input type="hidden" name="id" value="{{ k.id }}"><button class="btn sm d">删除</button></form></td></tr>
+{% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">还没有</td></tr>{% endfor %}</tbody></table></div>
+{% if secure and webauthn %}<div style="display:flex;gap:8px;margin-top:10px"><input type="text" id="pkname" placeholder="名称，例如：我的 iPhone" style="max-width:240px">
+<button class="btn p" onclick="pkRegister('{{ url_for('admin.passkey_register_options') }}','{{ url_for('admin.passkey_register_verify') }}',document.getElementById('pkname').value)">添加通行密钥</button></div>{% endif %}
+</div>
+<form method="post" class="f card"><h2>修改密码</h2><input type="hidden" name="act" value="password">
+  <div class="row"><label class="l">原密码</label><div><input type="password" name="old" required autocomplete="current-password"></div></div>
+  <div class="row"><label class="l">新密码</label><div><input type="password" name="new" required minlength="10" autocomplete="new-password"></div></div>
+  <div class="row"><label class="l">再输一次</label><div><input type="password" name="new2" required minlength="10" autocomplete="new-password"></div></div>
+  <div class="row"><span></span><div><button class="btn p">修改</button></div></div>
+</form>
+<script src="{{ url_for('static', filename='passkey.js') }}?v={{ version }}"></script>{% endblock %}

@@ -7,3 +7,4 @@ PyYAML>=6.0
 gunicorn>=22
 qrcode>=7.4
 PySocks>=1.7
+webauthn>=2.0

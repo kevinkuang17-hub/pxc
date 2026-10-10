@@ -21,6 +21,17 @@
   <div class="row"><label class="l">Telegram Bot Token</label><div><input type="text" name="tg_bot_token" value="{{ v.tg_bot_token }}"></div></div>
   <div class="row"><label class="l">Telegram Chat ID</label><div><input type="text" name="tg_chat_id" value="{{ v.tg_chat_id }}"></div></div>
 </div>
+<div class="card"><h2>运营报告与异常</h2>
+  <div class="row"><label class="l">运营报告</label><div><select name="ops_report">{% for k, lab in [('off','不发'),('daily','每天'),('weekly','每周一')] %}<option value="{{ k }}" {{ 'selected' if (v.ops_report or 'off') == k }}>{{ lab }}</option>{% endfor %}</select>
+    <input type="number" name="ops_report_hour" min="0" max="23" value="{{ v.ops_report_hour or 9 }}" style="width:80px"> 点
+    <div class="help">发到上面的 Telegram 和 Webhook：流量、用量前五、离线服务器、摘除的线路、即将到期、VPS 续费、每 GB 成本、异常次数</div></div></div>
+  <div class="row"><label class="l">流量突增</label><div>最近 24 小时超过过去 7 天日均的 <input type="number" step="0.5" name="spike_multiple" value="{{ v.spike_multiple or 5 }}" style="width:70px"> 倍，且超过 <input type="number" name="spike_min_gb" value="{{ v.spike_min_gb or 5 }}" style="width:70px"> GB 时告警</div></div>
+  <div class="row"><label class="l">订阅外泄</label><div>24 小时内超过 <input type="number" name="sub_ip_limit" value="{{ v.sub_ip_limit or 10 }}" style="width:70px"> 个不同 IP 拉取时告警
+    <label style="display:block;margin-top:6px"><input type="checkbox" name="sub_leak_reset" value="1" {% if v.sub_leak_reset == '1' %}checked{% endif %}> 同时自动更换该用户的订阅地址</label></div></div>
+  <div class="row"><label class="l">按应用统计流量</label><div><label><input type="checkbox" name="app_stats" value="1" {% if v.app_stats == '1' %}checked{% endif %}> 开启</label>
+    <div class="help">在接管的服务器上把 AI / 视频 / 社交 / 下载更新的流量分开计数（仍然直连，出口不变）。只统计从这台服务器直接出去的流量；走落地的线路在落地服务器上统计。开关后会自动推送一次模板。</div></div></div>
+  <div class="row"><label class="l">设备超限</label><div class="help">在线用户的来源 IP 数超过设备数上限时告警（需要 3X-UI 开启 IP 记录，即“IP 限制”功能用到的访问日志）</div></div>
+</div>
 <div class="card"><h2>访问控制</h2>
   <div class="row"><label class="l">后台 IP 白名单</label><div><textarea name="admin_ip_allowlist" placeholder="100.64.0.0/10&#10;1.2.3.4">{{ v.admin_ip_allowlist }}</textarea><div class="help">留空 = 不限制。只允许 Tailscale 可填 100.64.0.0/10。填错会把自己关在外面，可在服务器上执行 pxc 菜单清空。</div></div></div>
   <div class="row"><label class="l">可信设备</label><div><label><input type="checkbox" name="allow_trusted_device" value="1" {% if v.allow_trusted_device != '0' %}checked{% endif %}> 允许“30 天内本设备免验证”</label></div></div>

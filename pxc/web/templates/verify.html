@@ -5,4 +5,6 @@
   <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="验证码" required autofocus>
   {% if allow_trust %}<label class="small muted" style="display:block;margin-bottom:12px"><input type="checkbox" name="trust" value="1"> 30 天内本设备免验证</label>{% endif %}
   <button class="btn p">验证</button>
-</form>{% endblock %}
+</form>
+{% if passkey %}<button class="btn" style="width:100%;margin-top:10px" onclick="pkAuth('{{ url_for('admin.passkey_auth_options') }}','{{ url_for('admin.passkey_auth_verify') }}')">用通行密钥验证</button>
+<script src="{{ url_for('static', filename='passkey.js') }}?v={{ version }}"></script>{% endif %}{% endblock %}

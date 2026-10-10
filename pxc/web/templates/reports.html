@@ -26,5 +26,26 @@
 {% for name, u, d, t in rows %}<tr><td>{{ name }}</td><td data-tip="上行 {{ hb(u) }}　下行 {{ hb(d) }}">{{ hb(t) }}</td><td><div class="meter"><i style="width:{{ (100 * t / top)|round(1) if top else 0 }}%"></i></div></td></tr>
 {% else %}<tr><td colspan="3" class="muted">暂无数据</td></tr>{% endfor %}</tbody></table></div></div>
 {% endfor %}</div>
-<p class="muted small">口径：内核按用户统计的字节数，每分钟采集一次；日期按北京时间。各应用 / 访问目标国家的分布要等 sing-box 节点或连接日志采集（下一版）。</p>
+<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">
+<div class="card"><h2>按应用（近 {{ days }} 天）</h2>
+{% if apps %}{% set top = apps[0][1] or 1 %}<div class="tbl"><table><tbody>
+{% for name, v in apps %}<tr><td>{{ name }}</td><td>{{ hb(v) }}</td><td style="width:45%"><div class="meter"><i style="width:{{ (100 * v / top)|round(1) }}%"></i></div></td></tr>{% endfor %}
+</tbody></table></div><p class="muted small">只含从服务器直接出去的流量（直出线路、落地服务器）。</p>
+{% elif app_on %}<p class="muted">已开启，等接管的服务器推送完、有流量后显示。</p>
+{% else %}<p class="muted">没有开启。在“外观与通知 → 运营报告与异常”里打开“按应用统计流量”。</p>{% endif %}</div>
+<div class="card"><h2>最近的异常</h2>
+<div class="tbl"><table><tbody>
+{% for e, p in anomalies %}<tr><td class="small">{{ fmt_dt(e.created_at) }}</td><td>{{ {'device_overuse':'设备超限','traffic_spike':'流量突增','sub_leak':'订阅外泄'}[e.type] }}</td>
+<td class="small wrap">{{ p.name }}{% if e.type == 'device_overuse' %}：{{ p.ips }} 个 IP / 上限 {{ p.limit }}{% elif e.type == 'traffic_spike' %}：24 小时 {{ p.last_24h_gb }} GB，平时日均 {{ p.avg_day_gb }} GB{% else %}：{{ p.ips }} 个 IP 拉取{% if p.sub_reset %}，已自动换地址{% endif %}{% endif %}</td></tr>
+{% else %}<tr><td class="muted">暂无</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+<div class="card"><h2>服务器成本</h2>
+<div class="tbl"><table><thead><tr><th>服务器</th><th>商家</th><th>月费</th><th>近 30 天用户流量</th><th>每 GB 成本</th><th>续费</th></tr></thead><tbody>
+{% for r in costs %}<tr><td>{{ r.server.name }}</td><td>{{ r.server.provider or '—' }}</td>
+<td>{% if r.cost %}{{ '%g'|format(r.cost) }} {{ r.currency }}{% else %}<span class="muted">未填</span>{% endif %}</td>
+<td>{{ '%.1f'|format(r.gb) }} GB</td><td>{% if r.per_gb is not none %}{{ '%.3f'|format(r.per_gb) }} {{ r.currency }}{% else %}—{% endif %}</td>
+<td>{% if r.renew_days is none %}<span class="muted">未填</span>{% elif r.renew_days < 0 %}<span class="tag err">已过 {{ -r.renew_days }} 天</span>{% elif r.renew_days <= 7 %}<span class="tag warn">{{ r.renew_days }} 天后</span>{% else %}{{ r.renew_days }} 天后{% endif %}</td></tr>
+{% endfor %}</tbody></table></div>
+<p class="muted small">月费和续费日期在服务器资料的“成本”一栏填写。落地服务器的流量算在入口服务器上，看每 GB 成本时请把一组入口 + 落地合起来看。</p></div>
+<p class="muted small">口径：内核按用户统计的字节数，每分钟采集一次；日期按报表时区（默认北京时间）。</p>
 {% endblock %}

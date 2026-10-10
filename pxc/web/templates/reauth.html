@@ -6,4 +6,6 @@
     <input type="text" name="code" inputmode="numeric" placeholder="验证码" required autofocus>
     <button class="btn p">验证</button>
   </form>
+  {% if passkey %}<button class="btn" style="margin-top:10px" onclick="pkAuth('{{ url_for('admin.passkey_auth_options') }}','{{ url_for('admin.passkey_auth_verify') }}',{{ nxt|tojson }})">用通行密钥验证</button>
+  <script src="{{ url_for('static', filename='passkey.js') }}?v={{ version }}"></script>{% endif %}
 </div>{% endblock %}

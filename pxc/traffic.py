@@ -76,6 +76,11 @@ def collect_all():
             collect_server(srv)
         except XuiError:
             pass
+        try:
+            from .insights import collect_app_traffic
+            collect_app_traffic(srv)
+        except XuiError:
+            pass
     return enforce_quotas()
 
 

@@ -61,6 +61,10 @@ class Server(Base, JsonMixin):
     dns_record_id = Column(String(64), default="")
     note = Column(Text, default="")
     created_at = Column(DateTime, default=now)
+    provider = Column(String(64), default="")           # VPS 商家
+    cost_monthly = Column(Float, default=0)             # 月均费用（年付填 年费/12）
+    cost_currency = Column(String(8), default="USD")
+    renew_at = Column(DateTime)                         # 下次续费日期
 
     inbounds = relationship("Inbound", back_populates="server", cascade="all, delete-orphan")
 
@@ -159,6 +163,9 @@ class Line(Base):
     backup_outbound_id = Column(Integer, ForeignKey("px_outbound.id"))  # 备用出站：主落地故障时自动切过去
     using_backup = Column(Boolean, default=False)
     auto_down = Column(Boolean, default=False)               # 连续探测失败被自动摘除
+    gfw_blocked = Column(Boolean, default=False)             # 国内探针全不通、海外正常 → 大概率被封（已从订阅去掉）
+    gfw_suspect = Column(Boolean, default=False)             # 同上的判断状态（关了自动摘除时只告警，不摘）
+    isp_bad = Column(String(64), default="")                 # 哪些运营商下不通（订阅里排后面）
     fail_streak = Column(Integer, default=0)
     latency_ms = Column(Integer)
     last_probe_at = Column(DateTime)
@@ -343,6 +350,29 @@ class CheckResult(Base):
     __table_args__ = (UniqueConstraint("target", "kind"),)
 
 
+class IspProbe(Base):
+    """国内探针（分布在各地的 KWRT / OpenWrt 路由器），按运营商测每条线路通不通。"""
+    __tablename__ = "px_isp_probe"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), unique=True, nullable=False)   # 广州移动-1
+    isp = Column(String(16), default="")                     # 移动 / 联通 / 电信 / 其它
+    region = Column(String(32), default="")
+    token_hash = Column(String(64), default="")
+    enabled = Column(Boolean, default=True)
+    last_seen_at = Column(DateTime)
+    last_ip = Column(String(64), default="")
+
+
+class IspResult(Base):
+    __tablename__ = "px_isp_result"
+    id = Column(Integer, primary_key=True)
+    probe_id = Column(Integer, index=True)
+    line_id = Column(Integer, index=True)
+    ok = Column(Boolean)
+    latency_ms = Column(Integer)
+    at = Column(DateTime, default=lambda: now(), index=True)
+
+
 class ProbeLog(Base):
     __tablename__ = "px_probe_log"
     id = Column(Integer, primary_key=True)
@@ -437,6 +467,22 @@ class Admin(Base):
     failed_count = Column(Integer, default=0)
     locked_until = Column(DateTime)
     created_at = Column(DateTime, default=now)
+    role = Column(String(16), default="super")           # super 超级管理员 / ops 运维 / support 只读客服
+    enabled = Column(Boolean, default=True)
+    note = Column(String(255), default="")
+
+
+class AdminPasskey(Base):
+    """通行密钥（WebAuthn）：可代替 TOTP 做第二步验证和敏感操作再验证。"""
+    __tablename__ = "px_admin_passkey"
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("px_admin.id"), index=True)
+    cred_id = Column(String(512), unique=True)           # base64url
+    public_key = Column(Text)                            # base64url（COSE）
+    sign_count = Column(Integer, default=0)
+    name = Column(String(64), default="")
+    created_at = Column(DateTime, default=now)
+    last_used_at = Column(DateTime)
 
 
 class AdminSession(Base):
@@ -483,6 +529,56 @@ class Setting(Base):
     __tablename__ = "px_setting"
     key = Column(String(64), primary_key=True)
     value = Column(Text, default="")
+
+
+class ConfigVersion(Base):
+    """每次成功推送后服务器上的配置（密钥已打码），用来查“什么时候改了什么”。"""
+    __tablename__ = "px_config_version"
+    id = Column(Integer, primary_key=True)
+    server_id = Column(Integer, index=True)
+    hash = Column(String(16))
+    reason = Column(String(255), default="")
+    content = Column(Text)
+    created_at = Column(DateTime, default=now)
+
+
+class KernelRollout(Base):
+    """Xray 内核灰度升级：先升一台（金丝雀），观察一段时间没问题再逐台升级；任何一台起不来就装回原版本并暂停。"""
+    __tablename__ = "px_kernel_rollout"
+    id = Column(Integer, primary_key=True)
+    version = Column(String(32))
+    canary_id = Column(Integer)
+    server_ids = Column(Text, default="[]")              # 顺序，第一台是金丝雀
+    progress = Column(Text, default="{}")                # {server_id: {"state": ..., "from": 旧版本, "msg": ...}}
+    status = Column(String(16), default="running")       # running / paused / done / failed / cancelled
+    observe_minutes = Column(Integer, default=30)
+    next_at = Column(DateTime, default=now)
+    note = Column(Text, default="")
+    operator = Column(String(64), default="")
+    created_at = Column(DateTime, default=now)
+    finished_at = Column(DateTime)
+
+
+class AppTraffic(Base):
+    """按应用（AI / 视频 / 社交 / 下载）统计的出口流量，只统计从本服务器直接出去的流量。"""
+    __tablename__ = "px_app_traffic"
+    id = Column(Integer, primary_key=True)
+    day = Column(String(10), index=True)
+    server_id = Column(Integer)
+    app = Column(String(16))
+    up_bytes = Column(BigInteger, default=0)
+    down_bytes = Column(BigInteger, default=0)
+    __table_args__ = (UniqueConstraint("day", "server_id", "app"),)
+
+
+class SubAccess(Base):
+    """订阅拉取记录（保留 7 天），用来发现订阅外泄（短时间内大量不同 IP 拉取）。"""
+    __tablename__ = "px_sub_access"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True)
+    ip = Column(String(64))
+    ua = Column(String(255))
+    at = Column(DateTime, default=now, index=True)
 
 
 class Event(Base):

@@ -141,6 +141,12 @@ def health():
                 flash(str(e), "error")
         elif act == "toggle_auto":
             set_setting("auto_remove_lines", "0" if get_setting("auto_remove_lines", "1") == "1" else "1")
+        elif act == "toggle_conservative":
+            on = get_setting("conservative_mode", "0") != "1"
+            set_setting("conservative_mode", "1" if on else "0")
+            audit("sub.conservative", "on" if on else "off", operator=g.admin.username)
+            flash("保守模式已开启：所有订阅只下发 Reality 和 CDN 线路（客户刷新订阅后生效）" if on else
+                  "保守模式已关闭，订阅恢复全部线路", "warn" if on else "ok")
         elif act == "restore":
             line = s.get(Line, int(request.form["line_id"]))
             line.auto_down, line.fail_streak = False, 0
@@ -161,6 +167,7 @@ def health():
     return render_template("health.html", lines=lines, checks=checks, reality=reality, bad=bad, exits=exits,
                            xray=bool(probe.xray_bin()), probe_on=get_setting("probe_enabled", "1") == "1",
                            auto=get_setting("auto_remove_lines", "1") == "1",
+                           conservative=get_setting("conservative_mode", "0") == "1",
                            cf=s.query(CfAccount).count())
 
 
@@ -309,7 +316,14 @@ def report_home():
     days = days if days in (7, 30, 90) else 30
     ov = reports.overview()
     trend = reports.daily_totals(days)
+    from .. import insights
+    from ..models import Event
+    anomalies = Session().query(Event).filter(
+        Event.type.in_(("device_overuse", "traffic_spike", "sub_leak"))).order_by(Event.id.desc()).limit(20).all()
     return render_template("reports.html", days=days, ov=ov, trend_svg=charts.trend(trend), trend=trend,
+                           costs=insights.cost_table(), apps=insights.app_summary(days) if insights.app_stats_on() else None,
+                           anomalies=[(e, json.loads(e.payload or "{}")) for e in anomalies],
+                           app_on=insights.app_stats_on(),
                            heat_svg=charts.heatmap(reports.heatmap()),
                            users=reports.ranking("client", days), servers=reports.ranking("server", days),
                            lines=reports.ranking("line", days),
@@ -329,3 +343,110 @@ def report_export():
     audit("reports.export", f"{days}d", operator=g.admin.username)
     return Response("﻿" + out.getvalue(), content_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename=traffic-{days}d.csv"})
+
+
+# ======================= 国内探针 =======================
+
+@bp.route("/probes", methods=["GET", "POST"])
+def isp_probes():
+    from .. import isp_probe
+    from ..models import IspProbe
+    s = Session()
+    cmd = None
+    if request.method == "POST":
+        act = request.form.get("act")
+        if act == "add":
+            name = request.form.get("name", "").strip()
+            console = request.form.get("console_url", "").strip().rstrip("/")
+            if console:
+                set_setting("console_probe_url", console)
+            if not name:
+                flash("请填写名称，如“广州移动-1”", "error")
+            elif s.query(IspProbe).filter_by(name=name).first():
+                flash("名称已存在", "error")
+            else:
+                p, tok = isp_probe.new_probe(name, request.form.get("isp", "其它"), request.form.get("region", "").strip())
+                base = get_setting("console_probe_url", "") or get_setting("console_node_url", "") or request.host_url.rstrip("/")
+                cmd = f'sh -c "$(curl -fsSL {base}/p/{tok})"'
+        elif act == "delete":
+            p = s.get(IspProbe, int(request.form["id"]))
+            if p:
+                s.delete(p)
+                s.commit()
+                audit("isp_probe.delete", p.name, operator=g.admin.username)
+                flash("已删除（路由器上的脚本会因为令牌失效而停止回报）", "ok")
+            return redirect(url_for("admin.isp_probes"))
+        elif act == "analyze":
+            r = isp_probe.analyze()
+            flash(f"已重新分析：新判定被封 {len(r['blocked'])} 条，恢复 {len(r['unblocked'])} 条", "ok")
+            return redirect(url_for("admin.isp_probes"))
+    probes = s.query(IspProbe).order_by(IspProbe.isp, IspProbe.name).all()
+    lines = s.query(Line).filter_by(enabled=True).order_by(Line.name).all()
+    return render_template("probes.html", probes=probes, lines=lines, m=isp_probe.matrix(), cmd=cmd,
+                           console=get_setting("console_probe_url", "") or get_setting("console_node_url", ""))
+
+
+# ======================= 配置历史 =======================
+
+@bp.route("/servers/<int:sid>/versions")
+def config_versions(sid):
+    from ..models import ConfigVersion
+    from ..sync import diff_versions
+    s = Session()
+    srv = s.get(Server, sid) or abort(404)
+    rows = s.query(ConfigVersion).filter_by(server_id=sid).order_by(ConfigVersion.id.desc()).limit(100).all()
+    cur = None
+    vid = request.args.get("v", type=int)
+    if rows:
+        cur = next((r for r in rows if r.id == vid), rows[0])
+    diff, base = [], None
+    if cur:
+        vs = request.args.get("vs", type=int)
+        base = s.get(ConfigVersion, vs) if vs else \
+            s.query(ConfigVersion).filter(ConfigVersion.server_id == sid, ConfigVersion.id < cur.id) \
+             .order_by(ConfigVersion.id.desc()).first()
+        if base and base.server_id != sid:
+            abort(404)
+        diff = diff_versions(base, cur)
+    return render_template("versions.html", srv=srv, rows=rows, cur=cur, base=base, diff=diff,
+                           full=request.args.get("full") == "1")
+
+
+# ======================= 内核灰度升级 =======================
+
+@bp.route("/kernel", methods=["GET", "POST"])
+def kernel_home():
+    from .. import kernel
+    from ..models import KernelRollout
+    s = Session()
+    if request.method == "POST":
+        r = sensitive()
+        if r:
+            return r
+        act = request.form.get("act")
+        try:
+            if act == "start":
+                ids = [int(x) for x in request.form.getlist("server_ids")]
+                canary = request.form.get("canary", type=int)
+                if canary in ids:
+                    ids.remove(canary)
+                    ids.insert(0, canary)
+                kernel.start(request.form.get("version", "").strip(), ids,
+                             request.form.get("observe", 30, type=int), operator=g.admin.username)
+                flash("已开始：先升级金丝雀服务器，后台每分钟推进一步", "ok")
+            elif act == "resume":
+                kernel.resume(request.form.get("id", type=int), g.admin.username)
+                flash("已继续（失败的那台会再试一次）", "ok")
+            elif act == "cancel":
+                kernel.cancel(request.form.get("id", type=int), g.admin.username)
+                flash("已取消，已升级的服务器保持新版本", "ok")
+        except ValueError as e:
+            flash(str(e), "error")
+        return redirect(url_for("admin.kernel_home"))
+    servers = s.query(Server).order_by(Server.name).all()
+    online = [x for x in servers if x.status == "online" and not x.maintenance]
+    vers = kernel.versions(online[0]) if online else []
+    rollouts = s.query(KernelRollout).order_by(KernelRollout.id.desc()).limit(10).all()
+    names = {x.id: x.name for x in servers}
+    return render_template("kernel.html", servers=servers, vers=vers, rollouts=rollouts, names=names,
+                           active=any(r.status in ("running", "paused") for r in rollouts))

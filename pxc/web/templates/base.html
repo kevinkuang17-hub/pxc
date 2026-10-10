@@ -11,7 +11,7 @@
 <div class="layout">
 <aside class="side">
   <div class="brand">{% if brand.logo %}<img src="{{ url_for('admin.static_brand', name=brand.logo) }}" alt="">{% endif %}{{ site_name }}</div>
-  <nav>
+  <nav>{% set role = (admin_user.role or 'super') if admin_user else 'super' %}
     <a href="{{ url_for('admin.dash') }}" class="{{ 'on' if ep=='admin.dash' }}">概览</a>
     <div class="sec">节点</div>
     <a href="{{ url_for('admin.r_list', res='servers') }}" class="{{ 'on' if nav_res=='servers' or ep.startswith('admin.server') }}">服务器</a>
@@ -26,18 +26,21 @@
     <a href="{{ url_for('admin.rules_home') }}" class="{{ 'on' if ep.startswith('admin.rule') or ep=='admin.profile_edit' }}">分流规则</a>
     <div class="sec">运维</div>
     <a href="{{ url_for('admin.health') }}" class="{{ 'on' if ep=='admin.health' }}">监控与核对</a>
+    {% if role != 'support' %}<a href="{{ url_for('admin.isp_probes') }}" class="{{ 'on' if ep=='admin.isp_probes' }}">国内探针</a>{% endif %}
     <a href="{{ url_for('admin.report_home') }}" class="{{ 'on' if ep.startswith('admin.report') }}">流量报表</a>
     <a href="{{ url_for('admin.jobs') }}" class="{{ 'on' if ep=='admin.jobs' }}">推送任务</a>
-    <a href="{{ url_for('admin.audit_log') }}" class="{{ 'on' if ep=='admin.audit_log' }}">操作日志</a>
-    <a href="{{ url_for('admin.cf_accounts') }}" class="{{ 'on' if ep=='admin.cf_accounts' }}">Cloudflare</a>
-    <a href="{{ url_for('admin.settings') }}" class="{{ 'on' if ep=='admin.settings' }}">外观与通知</a>
-    <a href="{{ url_for('admin.security') }}" class="{{ 'on' if ep=='admin.security' }}">安全与对接</a>
+    {% if role != 'support' %}<a href="{{ url_for('admin.kernel_home') }}" class="{{ 'on' if ep=='admin.kernel_home' }}">内核升级</a>{% endif %}
+    {% if role != 'support' %}<a href="{{ url_for('admin.audit_log') }}" class="{{ 'on' if ep=='admin.audit_log' }}">操作日志</a>{% endif %}
+    {% if role != 'support' %}<a href="{{ url_for('admin.cf_accounts') }}" class="{{ 'on' if ep=='admin.cf_accounts' }}">Cloudflare</a>{% endif %}
+    {% if role == 'super' %}<a href="{{ url_for('admin.settings') }}" class="{{ 'on' if ep=='admin.settings' }}">外观与通知</a>{% endif %}
+    {% if role == 'super' %}<a href="{{ url_for('admin.security') }}" class="{{ 'on' if ep=='admin.security' }}">安全与对接</a>{% endif %}
+    {% if role == 'super' %}<a href="{{ url_for('admin.admins') }}" class="{{ 'on' if ep=='admin.admins' }}">管理员</a>{% endif %}
   </nav>
   <div class="ver">{{ version }}{% if build %} · {{ build[:10] }}{% endif %}</div>
 </aside>
 <div class="main">
   <div class="top"><h1>{% block h1 %}{% endblock %}</h1>
-    <div class="who">{% if admin_user %}{{ admin_user.username }} · <a href="{{ url_for('admin.logout') }}">退出</a>{% endif %}</div></div>
+    <div class="who">{% if admin_user %}<a href="{{ url_for('admin.me') }}">{{ admin_user.username }}</a> · <a href="{{ url_for('admin.logout') }}">退出</a>{% endif %}</div></div>
   <div class="content">{% block body %}{% endblock %}</div>
   {% if footer %}<div class="foot">{{ footer }}</div>{% endif %}
 </div></div>

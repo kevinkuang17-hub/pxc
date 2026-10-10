@@ -87,17 +87,21 @@ def apply_access(items):
     import datetime as dt
     from ..models import Client, Session
     s = Session()
+    from ..models import SubAccess
     for it in items[-2000:]:
         c = s.query(Client).filter_by(sub_token=it["token"]).first()
         if c:
             c.last_sub_at = dt.datetime.utcfromtimestamp(it["at"])
             c.last_sub_ua, c.last_sub_ip = it["ua"][:250], it["ip"][:64]
+            s.add(SubAccess(client_id=c.id, ip=it["ip"][:64], ua=it["ua"][:250], at=c.last_sub_at))
     s.commit()
 
 
 def _ip():
-    return (request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0]
-            or request.remote_addr or "").strip()
+    if get_config().trust_proxy:          # 订阅服务在 Cloudflare 后面时才信任这些头，否则可以伪造
+        return (request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0]
+                or request.remote_addr or "").strip()
+    return (request.remote_addr or "").strip()
 
 
 def _rate_ok(token):
@@ -179,7 +183,7 @@ def _ruleset_text(rid):
 
 @bp.route("/r/<int:rid>.<ext>")
 def ruleset_file(rid, ext):
-    if ext not in ("list", "json", "domain.txt", "ipcidr.txt"):
+    if ext not in ("list", "json", "domain.txt", "ipcidr.txt", "qx"):
         abort(404)
     # 只给拿着订阅里地址（带内容 hash）的客户端，防止按编号遍历下载自定义规则
     meta = (provider.get().get("rulesets") or {}).get(str(rid)) or {}
@@ -199,7 +203,8 @@ def ruleset_file(rid, ext):
         if ext == "json":
             body = rules.render_singbox_source(_R)
         else:
-            body = rules.render_list(_R, ext.split(".")[0] if ext.endswith(".txt") else "classical")
+            body = rules.render_list(_R, ext.split(".")[0] if ext.endswith(".txt") else
+                                     "qx" if ext == "qx" else "classical")
         for k in [k for k in _rendered if k[:2] == (rid, ext)]:
             _rendered.pop(k, None)
         _rendered[key] = body
@@ -216,14 +221,16 @@ def serve(c, snap):
     fmt = subgen.detect_format(request.args.get("target") or request.args.get("format"), request.user_agent.string,
                                c.get("format", ""))
     settings = snap.get("settings", {})
+    safe = request.args.get("safe") == "1"          # 保守模式：只要 Reality / CDN 线路
     if fmt == "html":
         url = request.base_url
-        nodes = [n for _, n in subgen.client_nodes(snap, c, "clash")]
+        nodes = [n for _, n in subgen.client_nodes(snap, c, "clash", safe)]
         return render_template("sub_guide.html", c=c, s=settings, url=url, nodes=nodes,
                                links=subgen.import_links(url, settings.get("site_name", "订阅")),
                                qr=subgen.qr_svg(url), hb=subgen.human_bytes)
     record_access(c, fmt)
-    body, ctype = subgen.render(snap, c, fmt, nodes_only=request.args.get("nodes") == "1", base_url=public_base())
+    body, ctype = subgen.render(snap, c, fmt, nodes_only=request.args.get("nodes") == "1", base_url=public_base(),
+                                conservative=safe)
     resp = Response(body, content_type=ctype)
     resp.headers["subscription-userinfo"] = subgen.userinfo_header(c)
     resp.headers["profile-update-interval"] = str(settings.get("sub_update_hours", 12))

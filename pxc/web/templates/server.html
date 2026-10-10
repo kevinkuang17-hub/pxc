@@ -5,6 +5,7 @@
   <form method="post" action="{{ url_for('admin.server_action', sid=srv.id) }}" {% if cf %}data-confirm="{{ cf }}"{% endif %}><input type="hidden" name="act" value="{{ act }}"><button class="btn {{ 'p' if act=='push' }}">{{ label }}</button></form>
   {% endfor %}
   <a class="btn" href="{{ url_for('admin.server_logs', sid=srv.id) }}">错误日志</a>
+  {% if (admin_user.role or 'super') != 'support' %}<a class="btn" href="{{ url_for('admin.config_versions', sid=srv.id) }}">配置历史</a>{% endif %}
   <span class="sp"></span>
   <form method="post" action="{{ url_for('admin.server_action', sid=srv.id) }}" data-confirm="{{ '切换为“控制台接管”后，服务器上的入站、用户、出站和路由都以控制台为准，手动改动会被还原。确定？' if srv.mode=='observe' else '切回“只读观察”后不再下发任何改动。确定？' }}"><input type="hidden" name="act" value="mode"><button class="btn">{{ '切换为控制台接管' if srv.mode=='observe' else '切回只读观察' }}</button></form>
   <form method="post" action="{{ url_for('admin.server_action', sid=srv.id) }}"><input type="hidden" name="act" value="maintenance"><button class="btn">{{ '结束维护' if srv.maintenance else '标记维护中' }}</button></form>

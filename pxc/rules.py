@@ -353,6 +353,10 @@ def render_list(rs, behavior="classical"):
         return "\n".join(("+." + v) if t == "DOMAIN-SUFFIX" else v for t, v in e) + "\n"
     if behavior == "ipcidr":
         return "\n".join(v for _, v in e) + "\n"
+    if behavior == "qx":        # Quantumult X：小写类型名，策略由订阅里的 force-policy 覆盖
+        qx = {"DOMAIN": "host", "DOMAIN-SUFFIX": "host-suffix", "DOMAIN-KEYWORD": "host-keyword",
+              "IP-CIDR": "ip-cidr", "IP-CIDR6": "ip6-cidr"}
+        return "\n".join(f"{qx[t]}, {v}, proxy" for t, v in e) + "\n"
     return (rs.content or "") + "\n"
 
 

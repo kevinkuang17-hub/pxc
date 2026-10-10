@@ -1,5 +1,7 @@
-# 合并到 main → 跑测试 → 自动算版本号 → 生成更新日志 → 打标签 → 打包 → 发布为“测试版”(prerelease)
-# 测试服务器验证没问题后，在 Actions 里手动运行 “promote” 把它标记为稳定版（安装命令和 pxc update 只取稳定版）
+# 推送到 main → 跑测试（含真实 Xray 互通测试）→ 自动算版本号 → 生成更新日志 → 打标签 → 打包 → 发布为稳定版
+# 测试不通过就不发布，服务器上的 pxc update 只会拿到测试通过的版本。
+# 想先在测试服务器上验证再放给生产：在仓库 Settings → Variables 设 PRERELEASE=1，发布为“测试版”，
+# 验证后在 Actions 里手动运行本流程并填 promote=yes 标记为稳定版。
 #
 # 源码放私有仓库时：在仓库 Settings → Variables 设 RELEASE_REPO=你的账号/pxc-release（公开、只放安装包），
 # Settings → Secrets 设 RELEASE_TOKEN（对 RELEASE_REPO 有 contents:write 的 fine-grained token）。
@@ -67,15 +69,16 @@ jobs:
           mkdir -p dist/pxc-release
           cp -a pxc scripts requirements.txt VERSION dist/pxc-release/
           find dist -name '__pycache__' -prune -exec rm -rf {} +
-          sed -i "s#YOUR_GITHUB/pxc-release#$REPO#" dist/pxc-release/scripts/install.sh
+          sed -i "s#kevinkuang19009-coder/pxc}#$REPO}#" dist/pxc-release/scripts/install.sh
           tar -C dist -czf dist/pxc-release.tar.gz pxc-release
           (cd dist && sha256sum pxc-release.tar.gz > pxc-release.tar.gz.sha256)
           cp dist/pxc-release/scripts/install.sh dist/install.sh
-      - name: 打标签并发布测试版
+      - name: 打标签并发布
         run: |
           V=${{ steps.ver.outputs.v }}
           git tag "$V" && git push origin "$V" || true
-          gh release create "$V" -R "$REPO" --prerelease --title "$V" --notes-file NOTES.md \
+          PRE=""; [ "${{ vars.PRERELEASE }}" = "1" ] && PRE="--prerelease" || PRE="--latest"
+          gh release create "$V" -R "$REPO" $PRE --title "$V" --notes-file NOTES.md \
             dist/pxc-release.tar.gz dist/pxc-release.tar.gz.sha256 dist/install.sh
 
   promote:

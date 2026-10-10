@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block h1 %}管理员{% endblock %}{% block body %}
+<div class="card"><h2>账号</h2>
+<p class="muted small">超级管理员：全部功能。运维：管服务器、线路、用户、规则，不能动管理员、安全与对接、外观与通知、Cloudflare 账号。只读客服：只能查看（看不到密钥，不能导出），适合查用户状态、发订阅地址。</p>
+<div class="tbl"><table><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>两步验证</th><th>备注</th><th></th></tr></thead><tbody>
+{% for a in rows %}<tr>
+<td>{{ a.username }}{% if a.id == admin_user.id %} <span class="muted small">（我）</span>{% endif %}</td>
+<td><form method="post" style="display:flex;gap:6px"><input type="hidden" name="act" value="role"><input type="hidden" name="id" value="{{ a.id }}">
+  <select name="role" onchange="this.form.submit()">{% for k, v in roles.items() %}<option value="{{ k }}" {{ 'selected' if (a.role or 'super') == k }}>{{ v }}</option>{% endfor %}</select></form></td>
+<td>{% if a.enabled is sameas false %}<span class="tag err">已停用</span>{% else %}<span class="tag ok">正常</span>{% endif %}</td>
+<td class="small">{{ '动态码' if a.totp_bound else '未绑定' }}{% if pk[a.id] %} · 通行密钥 {{ pk[a.id] }}{% endif %}</td>
+<td class="small">{{ a.note }}</td>
+<td style="white-space:nowrap">
+  <form method="post" style="display:inline"><input type="hidden" name="act" value="toggle"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm">{{ '启用' if a.enabled is sameas false else '停用' }}</button></form>
+  <form method="post" style="display:inline" data-confirm="重置 {{ a.username }} 的密码？对方会被强制下线。"><input type="hidden" name="act" value="password"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm">重置密码</button></form>
+  <form method="post" style="display:inline" data-confirm="清除 {{ a.username }} 的动态验证码和通行密钥？对方下次登录要重新绑定。"><input type="hidden" name="act" value="totp"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm">重置两步验证</button></form>
+  <form method="post" style="display:inline" data-confirm="删除管理员 {{ a.username }}？"><input type="hidden" name="act" value="delete"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm d">删除</button></form>
+</td></tr>{% endfor %}</tbody></table></div></div>
+<form method="post" class="f card"><h2>添加管理员</h2><input type="hidden" name="act" value="add">
+  <div class="row"><label class="l">用户名</label><div><input type="text" name="username" required maxlength="64"></div></div>
+  <div class="row"><label class="l">角色</label><div><select name="role">{% for k, v in roles.items() %}<option value="{{ k }}" {{ 'selected' if k == 'support' }}>{{ v }}</option>{% endfor %}</select></div></div>
+  <div class="row"><label class="l">备注</label><div><input type="text" name="note" placeholder="例如：客服小王"></div></div>
+  <div class="row"><span></span><div><button class="btn p">添加（自动生成初始密码）</button></div></div>
+</form>{% endblock %}

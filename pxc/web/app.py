@@ -29,6 +29,7 @@ def create_app(role=None):
     if role == "console":
         from .admin import bp as admin_bp
         from . import ops  # noqa: F401  v0.2 页面注册到同一个后台蓝图
+        from . import team  # noqa: F401  多管理员 / 通行密钥
         from .api import api, internal
         app.jinja_env.filters["fromjson"] = lambda v: __import__("json").loads(v or "[]")
         app.register_blueprint(admin_bp, url_prefix=cfg.login_path)

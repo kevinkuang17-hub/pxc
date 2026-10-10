@@ -42,7 +42,7 @@ class XuiClient:
     def _raw(self, method, path, **kw):
         url = self.base + path
         try:
-            resp = self.http.request(method, url, timeout=self.timeout, **kw)
+            resp = self.http.request(method, url, timeout=kw.pop("timeout", self.timeout), **kw)
         except requests.RequestException as e:
             raise XuiError(f"连不上面板 {self.base}：{e.__class__.__name__}") from e
         if resp.status_code == 404:
@@ -104,6 +104,38 @@ class XuiClient:
             return self.call("POST", "/panel/api/inbounds/onlines") or []
         except XuiError:
             return []
+
+    def xray_versions(self):
+        try:
+            return self.call("GET", "/panel/api/server/getXrayVersion") or []
+        except XuiError:
+            return self.call("POST", "/server/getXrayVersion", "/panel/server/getXrayVersion") or []   # 旧版本
+
+    def install_xray(self, version):
+        """让面板下载安装指定版本的 Xray（面板自己会重启 Xray）。"""
+        v = version if version.startswith("v") else "v" + version
+        return self.call("POST", f"/panel/api/server/installXray/{v}", f"/server/installXray/{v}",
+                         f"/panel/server/installXray/{v}", timeout=240)     # 面板要先下载，慢
+
+    def outbound_traffic(self):
+        """3X-UI 累计的各出站流量：[{tag, up, down}]。旧版本没有这个接口时抛 NoEndpoint。"""
+        return self.call("POST", "/panel/xray/getOutboundsTraffic", "/panel/api/xray/getOutboundsTraffic") or []
+
+    def client_ips(self, email):
+        """这个用户最近连过来的 IP（需要面板开启 IP 记录）。"""
+        from urllib.parse import quote
+        try:
+            obj = self.call("POST", f"/panel/api/inbounds/clientIps/{quote(email, safe='')}")
+        except XuiError:
+            return []
+        if isinstance(obj, str):
+            if not obj or "No IP" in obj:
+                return []
+            try:
+                obj = json.loads(obj)
+            except ValueError:
+                obj = obj.split(",")
+        return [str(x) for x in obj or []]
 
     def logs(self, n=50):
         try:

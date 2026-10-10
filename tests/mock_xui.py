@@ -34,6 +34,10 @@ class MockXui:
         self.xray_error = ""
         self.restarts = 0
         self.fail_next_restart = False
+        self.out_traffic = []
+        self.installs, self.broken_versions, self.xray_version = [], set(), "25.9.11"             # getOutboundsTraffic 的返回
+        self.online_emails = []
+        self.client_ip_map = {}
         self.v3_clients = False           # True = 模拟新版 3X-UI：旧的按入站改用户接口没了，改用 /panel/api/clients/
         self.app = self._make_app()
         self.srv = make_server("127.0.0.1", 0, self.app, threaded=True)
@@ -246,12 +250,33 @@ class MockXui:
 
         @app.post(b + "/panel/api/inbounds/onlines")
         def onlines():
-            return ok([])
+            return ok(list(self.online_emails))
+
+        @app.post(b + "/panel/api/inbounds/clientIps/<email>")
+        def client_ips(email):
+            ips = self.client_ip_map.get(email)
+            return ok(json.dumps(ips) if ips else "No IP Record")
+
+        @app.get(b + "/panel/api/server/getXrayVersion")
+        def xray_versions():
+            return ok(["v25.10.15", "v25.9.11", "v25.8.3"])
+
+        @app.post(b + "/panel/api/server/installXray/<v>")
+        def install_xray(v):
+            self.installs.append(v)
+            self.xray_version = v.lstrip("v")
+            broken = v in self.broken_versions
+            self.xray_state, self.xray_error = ("error", "panic: bad build") if broken else ("running", "")
+            return ok()
+
+        @app.post(b + "/panel/xray/getOutboundsTraffic")
+        def out_traffic():
+            return ok(list(self.out_traffic))
 
         @app.get(b + "/panel/api/server/status")
         def status():
             return ok({"cpu": 3.5, "mem": {"current": 100, "total": 1000},
-                       "xray": {"state": self.xray_state, "errorMsg": self.xray_error, "version": "25.9.11"}})
+                       "xray": {"state": self.xray_state, "errorMsg": self.xray_error, "version": self.xray_version}})
 
         @app.post(b + "/panel/api/server/restartXrayService")
         def restart():

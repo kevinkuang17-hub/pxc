@@ -19,7 +19,7 @@
     <div class="qr">{{ qr|safe }}</div>
     <div><p class="muted small">一键导入（发给用户；在浏览器里打开订阅地址也会看到引导页）</p>
       {% for name, link, plat in links %}<div style="margin:4px 0"><a href="{{ link }}">{{ name }}</a> <span class="muted small">{{ plat }}</span></div>{% endfor %}
-      <p class="muted small" style="margin-top:10px">指定格式：<code>?target=clash</code> / <code>singbox</code> / <code>v2ray</code> / <code>shadowrocket</code>；OpenClash 只要节点：<code>?target=clash&amp;nodes=1</code></p>
+      <p class="muted small" style="margin-top:10px">指定格式：<code>?target=clash</code> / <code>singbox</code> / <code>v2ray</code> / <code>shadowrocket</code> / <code>stash</code> / <code>surge</code> / <code>loon</code> / <code>qx</code>；敏感时期只要 Reality 和 CDN 线路：加 <code>&amp;safe=1</code>；OpenClash 只要节点：<code>?target=clash&amp;nodes=1</code></p>
       {% if c.legacy_sub_id %}<p class="muted small">旧 3X-UI 订阅路径（subId {{ c.legacy_sub_id }}）继续可用。</p>{% endif %}
     </div></div></div>
 <div class="card"><h2>可用线路（{{ lines|length }}）</h2>

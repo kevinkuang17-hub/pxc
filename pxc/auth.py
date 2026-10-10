@@ -33,9 +33,39 @@ def client_ip():
 
 # ---------- 账号 ----------
 
-def create_admin(username, password):
+ROLES = {"super": "超级管理员", "ops": "运维", "support": "只读客服"}
+
+# 运维不能碰：管理员账号、安全与对接（密钥 / 令牌 / 登录路径）、外观与通知、Cloudflare 账号
+SUPER_ONLY = {"admin.security", "admin.make_secret", "admin.subnode_delete", "admin.admins", "admin.settings"}
+SUPER_ONLY_POST = {"admin.cf_accounts"}
+# 只读客服：只能看，不能改；也不能看密钥、导出用户、看服务器日志
+SUPPORT_DENY = {"admin.inbound_reveal", "admin.clients_export", "admin.report_export", "admin.server_logs",
+                "admin.r_edit", "admin.r_delete", "admin.import_all", "admin.server_join", "admin.quick_line",
+                "admin.quick_exit", "admin.cf_accounts", "admin.audit_log", "admin.isp_probes",
+                "admin.kernel_home", "admin.config_versions"}
+SUPPORT_POST_OK = {"admin.logout", "admin.totp_setup", "admin.reauth", "admin.me", "admin.rules_test",
+                   "admin.passkey_register_options", "admin.passkey_register_verify",
+                   "admin.passkey_auth_options", "admin.passkey_auth_verify"}
+
+
+def can(admin, endpoint, method="GET"):
+    role = (admin.role or "super") if admin else ""
+    if role == "super":
+        return True
+    if endpoint in SUPER_ONLY or (method != "GET" and endpoint in SUPER_ONLY_POST):
+        return False
+    if role == "ops":
+        return True
+    if role == "support":
+        if endpoint in SUPPORT_DENY:
+            return False
+        return method in ("GET", "HEAD") or endpoint in SUPPORT_POST_OK
+    return False
+
+
+def create_admin(username, password, role="super"):
     s = Session()
-    a = Admin(username=username, pass_hash=generate_password_hash(password))
+    a = Admin(username=username, pass_hash=generate_password_hash(password), role=role if role in ROLES else "support")
     s.add(a)
     s.commit()
     return a
@@ -148,10 +178,13 @@ def current():
     row = s.get(AdminSession, sha(sid))
     if not row or row.revoked or now() - row.last_active_at > IDLE:
         return None, None
+    a = s.get(Admin, row.admin_id)
+    if not a or a.enabled is False:
+        return None, None
     if now() - row.last_active_at > dt.timedelta(seconds=60):
         row.last_active_at = now()
         s.commit()
-    return s.get(Admin, row.admin_id), row
+    return a, row
 
 
 def ip_allowed():
@@ -182,6 +215,8 @@ def require_login():
     g.admin, g.sess = admin, row
     if not admin.totp_bound and request.endpoint not in ("admin.totp_setup", "admin.logout", "admin.static_brand"):
         return redirect(url_for("admin.totp_setup"))
+    if not can(admin, request.endpoint, request.method):
+        abort(403)
     return None
 
 
@@ -229,6 +264,7 @@ def verify_sso_token(token):
         return None
     s.add(OneTimeToken(token_hash=h, purpose="sso", used_at=now(), expires_at=now() + dt.timedelta(minutes=5)))
     s.commit()
+    q = s.query(Admin).filter(Admin.enabled.isnot(False))
     if username:                      # 指定了不存在的用户名就拒绝，不要静默落到第一个管理员
-        return s.query(Admin).filter_by(username=username).first()
-    return s.query(Admin).order_by(Admin.id).first()
+        return q.filter_by(username=username).first()
+    return q.filter(Admin.role.in_(("super", None))).order_by(Admin.id).first()

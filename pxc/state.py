@@ -362,6 +362,22 @@ def desired_state(server):
             rules.append(rule)
             roots.append(ob)
 
+    # 按应用统计流量（可选）：直接从本机出去的流量按 AI / 视频 … 分到 px-app-* 出站。
+    # 这些规则放在整个路由表最后（模板里手写的规则优先），出站复制默认出口的设置（sync._apply_app），出口不变。
+    app_rules = []
+    from .models import get_setting
+    if server.mode == "managed" and get_setting("app_stats", "0") == "1":
+        from .insights import APP_PREFIX, APPS
+        tags = [xui_tag(l.entry) for l in sorted(lines, key=lambda x: x.id) if l.enabled and l.effective_outbound is None]
+        tags += [xui_tag(i) for i in inbs if i.kind == "exit"]
+        tags = list(dict.fromkeys(tags))
+        if tags:
+            for key, _, sites in APPS:
+                app_rules.append({"type": "field", "ruleTag": f"{PX}app-{key}", "inboundTag": tags, "domain": sites,
+                                  "outboundTag": APP_PREFIX + key})
+            state["app_outbounds"] = [{"tag": APP_PREFIX + key, "protocol": "freedom", "settings": {}}
+                                      for key, _, _ in APPS]
+
     obs = _collect_outbounds(roots)
     probe_members = []
     for ob in obs:
@@ -376,11 +392,12 @@ def desired_state(server):
             state["outbounds"].append(render_outbound(ob))
     if block_ob is not None:
         state["outbounds"].append({"tag": PX + "block", "protocol": "blackhole", "settings": {}})
+    state["outbounds"] += state.pop("app_outbounds", [])
     if probe_members:
         state["observatory"] = {"subjectSelector": sorted(set(probe_members)),
                                 "probeUrl": "https://www.gstatic.com/generate_204", "probeInterval": "1m",
                                 "enableConcurrency": True}
-    state["rules"] = rules
+    state["rules"] = rules + app_rules
     return state
 
 

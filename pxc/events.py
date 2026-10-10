@@ -22,6 +22,11 @@ LABELS = {
     "probe_suppressed": "大部分线路同时探测失败（已暂停自动摘除）",
     "exit_down": "落地连续探测失败", "exit_failover": "落地故障，已切到备用落地", "exit_restore": "落地恢复，已切回主落地",
     "exit_ip": "线路出口 IP 与预期不符", "unlock_change": "解锁情况变化",
+    "gfw_blocked": "线路疑似被封（国内全不通、海外正常）", "gfw_unblocked": "线路国内恢复连通", "isp_bad": "线路在部分运营商下不通",
+    "hy2_down": "Hysteria2 线路连续实测失败", "hy2_up": "Hysteria2 线路恢复",
+    "device_overuse": "用户在线设备数超过上限", "traffic_spike": "用户流量突增", "sub_leak": "订阅疑似外泄",
+    "vps_renew": "VPS 即将续费", "ops_report": "运营报告",
+    "kernel_done": "Xray 内核灰度升级完成", "kernel_failed": "Xray 内核升级失败，灰度已暂停",
 }
 
 
@@ -58,8 +63,11 @@ def deliver_pending(limit=50):
             except requests.RequestException:
                 ok = False
         if tg_token and tg_chat and ev.type not in ("traffic_80",):
-            text = f"【{get_setting('site_name', '节点控制台')}】{LABELS.get(ev.type, ev.type)}\n" + \
-                   "\n".join(f"{k}: {v}" for k, v in payload.items())
+            if payload.get("_text"):
+                text = payload["_text"]
+            else:
+                text = f"【{get_setting('site_name', '节点控制台')}】{LABELS.get(ev.type, ev.type)}\n" + \
+                       "\n".join(f"{k}: {v}" for k, v in payload.items())
             try:
                 requests.post(f"https://api.telegram.org/bot{tg_token}/sendMessage",
                               json={"chat_id": tg_chat, "text": text[:3500]}, timeout=10)

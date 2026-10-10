@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block h1 %}{{ srv.name }} · 配置历史{% endblock %}{% block body %}
+<div class="toolbar"><a class="btn" href="{{ url_for('admin.server_detail', sid=srv.id) }}">返回服务器</a></div>
+{% if not rows %}<div class="card muted">还没有记录。每次推送成功、每 5 分钟巡检发现服务器配置有变化时会记一版（密钥只保留后 4 位）。</div>{% else %}
+<div class="grid" style="grid-template-columns:minmax(260px,320px) 1fr;align-items:start">
+<div class="card"><h2>版本</h2><div class="tbl"><table><tbody>
+{% for r in rows %}<tr class="{{ 'on' if cur and r.id == cur.id }}"><td><a href="?v={{ r.id }}">{{ fmt_dt(r.created_at) }}</a>{% if cur and r.id == cur.id %} ◀{% endif %}<div class="muted small">{{ r.reason or '推送' }}</div></td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><h2>{{ fmt_dt(cur.created_at) }} 与 {{ fmt_dt(base.created_at) if base else '（最早一版）' }} 相比</h2>
+<p class="muted small"><a href="?v={{ cur.id }}&full=1">看这一版完整内容</a></p>
+{% if full %}<pre class="code" style="max-height:70vh;overflow:auto">{{ cur.content }}</pre>
+{% elif diff %}<pre class="code diff" style="max-height:70vh;overflow:auto">{% for k, ln in diff %}<span class="d-{{ k }}">{{ ln or ' ' }}</span>{% endfor %}</pre>{% else %}<p class="muted">没有变化</p>{% endif %}
+</div></div>{% endif %}
+<style>.diff .d-add{color:var(--ok,#1a7f37);background:color-mix(in srgb,#2da44e 12%,transparent);display:block}.diff .d-del{color:var(--err,#cf222e);background:color-mix(in srgb,#cf222e 10%,transparent);display:block}.diff .d-hunk{color:var(--muted,#888);display:block;margin-top:6px}.diff .d-ctx{display:block}pre.code{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}</style>
+{% endblock %}

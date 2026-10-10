@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # 节点控制台 一键安装 / 升级
-#   控制台：  bash <(curl -fsSL https://github.com/<你的账号>/<仓库>/releases/latest/download/install.sh)
+#   控制台：  bash <(curl -fsSL https://raw.githubusercontent.com/kevinkuang19009-coder/pxc/main/scripts/install.sh)
 #   订阅服务：在控制台“安全与对接 → 添加订阅节点”复制单行命令
 #   本地包：  bash install.sh              （在解压后的目录里执行）
 #__PRESET__
 set -euo pipefail
 
-PXC_REPO="${PXC_REPO:-YOUR_GITHUB/pxc-release}"
+PXC_REPO="${PXC_REPO:-kevinkuang19009-coder/pxc}"
+case "$PXC_REPO" in YOUR_GITHUB/*|"") PXC_REPO=kevinkuang19009-coder/pxc ;; esac
 PXC_ROLE="${PXC_ROLE:-console}"
 PXC_HOME=/opt/pxc
 PXC_ETC=/etc/pxc
@@ -46,17 +47,27 @@ done
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 if [ -z "$SRC_DIR" ] || [ -n "${PXC_PKG_URL:-}" ]; then
-  URL="${PXC_PKG_URL:-https://github.com/$PXC_REPO/releases/latest/download/pxc-release.tar.gz}"
   step "下载安装包"
-  curl -fsSL --retry 3 "$URL" -o "$TMP/pkg.tar.gz" || die "下载失败：$URL"
-  if [ -z "${PXC_PKG_URL:-}" ]; then
-    if curl -fsSL "$URL.sha256" -o "$TMP/pkg.sha256" 2>/dev/null; then
+  URL="${PXC_PKG_URL:-https://github.com/$PXC_REPO/releases/latest/download/pxc-release.tar.gz}"
+  CODE=$(curl -sSL --retry 3 -o "$TMP/pkg.tar.gz" -w '%{http_code}' "$URL" 2>/dev/null || true)
+  if [ "$CODE" = 200 ] || { [ -n "${PXC_PKG_URL:-}" ] && [ -s "$TMP/pkg.tar.gz" ] && [ "$CODE" = 000 ] && case "$URL" in file://*) true;; *) false;; esac; }; then
+    if [ -z "${PXC_PKG_URL:-}" ] && curl -fsSL "$URL.sha256" -o "$TMP/pkg.sha256" 2>/dev/null; then
       ( cd "$TMP" && echo "$(cut -d' ' -f1 pkg.sha256)  pkg.tar.gz" | sha256sum -c --quiet - ) || die "安装包校验失败，可能被篡改"
       green "  校验通过"
     fi
+  elif [ -z "${PXC_PKG_URL:-}" ] && [ "$CODE" = 404 ]; then
+    # 仓库还没有发布过版本（只在 404 时才这样做；网络抖动不会误装开发中的代码）：用 main 分支的最新代码
+    URL="https://codeload.github.com/$PXC_REPO/tar.gz/refs/heads/${PXC_BRANCH:-main}"
+    yellow "  没有找到发布版本，改用 ${PXC_BRANCH:-main} 分支的最新代码"
+    curl -fsSL --retry 3 "$URL" -o "$TMP/pkg.tar.gz" || die "下载失败：$URL（仓库是否公开？地址对吗？）"
+  else
+    die "下载失败（HTTP ${CODE:-?}）：$URL，请检查网络后重试"
   fi
-  tar -xzf "$TMP/pkg.tar.gz" -C "$TMP"
-  SRC_DIR="$TMP/pxc-release"
+  mkdir -p "$TMP/x"
+  tar -xzf "$TMP/pkg.tar.gz" -C "$TMP/x"
+  SRC_DIR=$(dirname "$(find "$TMP/x" -maxdepth 3 -path '*/pxc/__init__.py' | head -1)" 2>/dev/null)
+  SRC_DIR=$(dirname "$SRC_DIR")
+  [ -f "$SRC_DIR/requirements.txt" ] || die "安装包内容不对（找不到 pxc 程序）"
 fi
 VER=$(cat "$SRC_DIR/VERSION" 2>/dev/null || echo dev)
 green "  版本 $VER"

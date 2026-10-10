@@ -7,6 +7,7 @@
   <form method="post" data-confirm="更换控制台的探测账号？各服务器会自动更新，旧账号立即失效。"><input type="hidden" name="act" value="rotate_probe"><button class="btn">更换探测账号</button></form>
   <a class="btn" href="{{ url_for('admin.health') }}">刷新</a>
   <span class="sp"></span>
+  <form method="post" data-confirm="{{ '关闭保守模式，订阅恢复全部线路？' if conservative else '开启保守模式？所有订阅只保留 Reality 和走 CDN 的线路（敏感时期用）。' }}"><input type="hidden" name="act" value="toggle_conservative"><button class="btn{{ ' p' if conservative else '' }}">{{ '保守模式：开' if conservative else '保守模式：关' }}</button></form>
   <form method="post"><input type="hidden" name="act" value="toggle_auto"><button class="btn">{{ '自动摘除：开' if auto else '自动摘除：关' }}</button></form>
 </div>
 {% if bad %}<div class="card" style="border-color:var(--warn)"><h2>需要处理（{{ bad|length }}）</h2><div class="tbl"><table><thead><tr><th>对象</th><th>项目</th><th>情况</th><th></th></tr></thead><tbody>

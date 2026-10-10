@@ -32,7 +32,9 @@ def backup_db():
     con.backup(bk)
     bk.close()
     con.close()
-    for f in sorted(os.listdir(d))[:-30]:
+    # 只清理每日备份；升级前的完整备份（before-*）由安装脚本管理，pxc rollback 要用
+    daily = sorted(f for f in os.listdir(d) if f.startswith("pxc-") and f.endswith(".db"))
+    for f in daily[:-30]:
         os.remove(os.path.join(d, f))
 
 
@@ -63,10 +65,14 @@ def _safe(fn):
 
 
 def _hourly(cloudflare, monitor, rules):
+    from . import insights
     try:
         _safe(monitor.check_reality_targets)
         _safe(cloudflare.check_all)
         _safe(rules.refresh_due)
+        _safe(insights.run_anomalies)
+        _safe(insights.check_renewals)
+        _safe(insights.maybe_send_report)
     finally:
         Session.remove()
 
@@ -75,6 +81,22 @@ def _chain():
     from . import probe
     try:
         _safe(probe.run_all)
+    finally:
+        Session.remove()
+
+
+def _hy2():
+    from . import probe
+    try:
+        _safe(probe.probe_hysteria)
+    finally:
+        Session.remove()
+
+
+def _kernel():
+    from . import kernel
+    try:
+        _safe(kernel.step)
     finally:
         Session.remove()
 
@@ -106,6 +128,16 @@ def tick(state, t):
         th = threading.Thread(target=_chain, daemon=True)   # 经线路实测出口 IP / 解锁：每 3 小时一次
         state["chain_thread"] = th
         th.start()
+    if t - state.get("kernel", 0) >= 60 and not (state.get("kernel_thread") and state["kernel_thread"].is_alive()):
+        state["kernel"] = t
+        th = threading.Thread(target=_kernel, daemon=True)  # 内核灰度升级：每分钟推进一步（安装要几十秒）
+        state["kernel_thread"] = th
+        th.start()
+    if t - state.get("hy2", 0) >= 300 and not (state.get("hy2_thread") and state["hy2_thread"].is_alive()):
+        state["hy2"] = t
+        th = threading.Thread(target=_hy2, daemon=True)     # Hysteria2（UDP）线路：每 5 分钟经线路测一次
+        state["hy2_thread"] = th
+        th.start()
     if t - state.get("reconcile", 0) >= 300:
         state["reconcile"] = t
         rep = _safe(sync.reconcile_all)
@@ -116,6 +148,9 @@ def tick(state, t):
         _safe(backup_db)
         _safe(check_new_version)
         _safe(monitor.prune)
+        from . import insights, isp_probe
+        _safe(isp_probe.prune)
+        _safe(insights.prune)
         _safe(reports.prune_hourly)
         Session().query(AuditLog).filter(AuditLog.created_at < now() - dt.timedelta(days=180)).delete()
         Session().commit()

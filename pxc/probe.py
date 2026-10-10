@@ -19,7 +19,7 @@ import time
 import requests
 
 from . import events
-from .models import CheckResult, Line, Session, audit, now
+from .models import CheckResult, Line, ProbeLog, Session, audit, get_setting, now
 from .state import probe_uuid
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -225,6 +225,85 @@ def test_line(line, runner_cls=XrayRunner, get=_get, services=SERVICES):
                 ok, detail = False, f"检测失败：{e.__class__.__name__}"
             out["services"][name] = {"ok": ok, "detail": detail}
     return out
+
+
+HY2_URL = "http://www.gstatic.com/generate_204"
+_hy2_lock = threading.Lock()
+
+
+def probe_hysteria(runner_cls=XrayRunner, get=_get):
+    """Hysteria2 走 UDP，TCP/TLS 握手测不了：起本地 Xray 经线路请求一次 generate_204。
+    连续 3 次失败从订阅摘除（与普通线路同一个开关、同一套“大面积失败不摘除”保护），恢复后加回。"""
+    from .monitor import FAIL_LIMIT
+    from .sub import node_of
+    if not _hy2_lock.acquire(blocking=False):
+        return {"skipped": "上一轮还没结束"}
+    try:
+        if runner_cls is XrayRunner and not xray_bin():
+            return {"skipped": "没有 xray"}
+        uid = probe_uuid()
+        if not uid:
+            return {"skipped": "探测已关闭"}
+        s = Session()
+        lines = [l for l in s.query(Line).filter_by(enabled=True).all()
+                 if l.entry and l.entry.protocol == "hysteria" and l.entry.kind == "entry" and l.entry.enabled
+                 and l.entry.server.mode == "managed" and not l.entry.server.maintenance]
+        results = {}
+        for l in lines:
+            n = node_of(l, ignore_down=True)
+            if not n:
+                continue
+            runner = runner_cls(n, uid)
+            try:
+                proxies = runner.__enter__()
+            except Exception:
+                continue                  # 控制台本机的 xray 起不来（版本太旧等）不算线路故障
+            t0 = time.time()
+            try:
+                r = get(proxies, HY2_URL, timeout=10, allow_redirects=False)
+                ok = r.status_code in (204, 200)
+                err = "" if ok else f"HTTP {r.status_code}"
+            except Exception as e:
+                ok, err = False, f"{e.__class__.__name__}: {e}"[:200]
+            finally:
+                runner.__exit__(None, None, None)
+            results[l.id] = (ok, int((time.time() - t0) * 1000), err)
+        auto = get_setting("auto_remove_lines", "1") == "1"
+        failed = sum(1 for r in results.values() if not r[0])
+        if len(results) >= 2 and failed == len(results):     # 全部同时失败：多半是控制台的 UDP 出不去
+            auto = False
+        down, up = [], []
+        for l in lines:
+            if l.id not in results:
+                continue
+            ok, ms, err = results[l.id]
+            s.add(ProbeLog(line_id=l.id, ok=ok, latency_ms=ms if ok else None, error=err))
+            if ok:
+                l.latency_ms, l.probe_error = ms, ""
+                if l.auto_down:
+                    l.auto_down = False
+                    up.append(l)
+                l.fail_streak = 0
+            else:
+                l.fail_streak = (l.fail_streak or 0) + 1
+                l.probe_error = err
+                if l.fail_streak >= FAIL_LIMIT and not l.auto_down and auto:
+                    l.auto_down = True
+                    down.append(l)
+                elif l.fail_streak == FAIL_LIMIT and not auto:
+                    down.append(l)
+            l.last_probe_at = now()
+        s.commit()
+        for l in down:
+            audit("line.auto_down", l.name, after=l.probe_error)
+            events.emit("hy2_down", {"line": l.name, "server": l.entry.server.name, "error": l.probe_error,
+                                     "note": "已从订阅暂时去掉" if l.auto_down else "大面积失败，未摘除"})
+        for l in up:
+            audit("line.auto_up", l.name)
+            events.emit("hy2_up", {"line": l.name, "note": "已恢复并加回订阅"})
+        return {"probed": len(results), "down": [l.name for l in down], "up": [l.name for l in up]}
+    finally:
+        _hy2_lock.release()
 
 
 def _put(target, kind, ok, detail):

@@ -43,7 +43,7 @@
   "enabled": true,
   "crm_ref": "C001",              // CRM 里的客户编号，用来双向关联
   "note": "",
-  "sub_format": "",               // 可选默认订阅格式：v2ray / clash / singbox / shadowrocket
+  "sub_format": "",               // 可选默认订阅格式：v2ray / clash / singbox / shadowrocket / stash / surge / loon / qx
   "overrides": [{"line_id": 3, "action": "include"}, {"line_id": 5, "action": "exclude"}]
 }
 ```
@@ -84,6 +84,15 @@ requests.post(f"{API}/clients/{c['id']}/renew", headers=H, json={"days": 30})
 | `exit_failover` / `exit_restore` | 线路已切到备用落地 / 已切回主落地 |
 | `exit_ip` | 经线路实测的出口 IP 和预期不符 |
 | `unlock_change` | ChatGPT / Claude / Gemini / Netflix / YouTube 解锁情况变化 |
+| `gfw_blocked` / `gfw_unblocked` | 国内探针全部不通、海外正常（疑似被封）/ 国内恢复 |
+| `isp_bad` | 线路在某些运营商下不通（data.isp：如“移动”） |
+| `hy2_down` / `hy2_up` | Hysteria2 线路连续实测失败（已摘除）/ 恢复 |
+| `device_overuse` | 用户在线来源 IP 数超过设备上限（data.ips / data.limit） |
+| `traffic_spike` | 用户最近 24 小时流量远超平时（data.last_24h_gb / data.avg_day_gb） |
+| `sub_leak` | 订阅 24 小时内被很多不同 IP 拉取（data.sub_reset=true 表示已自动换订阅地址，CRM 应重新取 sub_url） |
+| `vps_renew` | VPS 即将续费 / 已过续费日 |
+| `kernel_done` / `kernel_failed` | Xray 内核灰度升级完成 / 某台失败（已装回原版本并暂停） |
+| `ops_report` | 运营日报 / 周报，data._text 是整段文字 |
 
 ```json
 {"event": "traffic_80", "id": 12, "at": "2026-10-10T02:00:00Z",

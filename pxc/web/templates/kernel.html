@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block h1 %}内核升级{% endblock %}{% block body %}
+<div class="card"><h2>各服务器当前版本</h2><div class="tbl"><table><thead><tr><th>服务器</th><th>Xray 版本</th><th>状态</th></tr></thead><tbody>
+{% for x in servers %}<tr><td>{{ x.name }}</td><td>{{ x.xray_version or '—' }}</td><td>{% if x.maintenance %}<span class="tag warn">维护中</span>{% elif x.status == 'online' %}<span class="tag ok">{{ x.xray_state or '在线' }}</span>{% else %}<span class="tag err">{{ x.status }}</span>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% if not active %}<form method="post" class="f card" data-confirm="开始灰度升级？先升金丝雀服务器，观察没问题再逐台升级。"><h2>灰度升级</h2><input type="hidden" name="act" value="start">
+  <div class="row"><label class="l">目标版本</label><div>{% if vers %}<select name="version">{% for v in vers %}<option>{{ v }}</option>{% endfor %}</select>{% else %}<input type="text" name="version" placeholder="v25.10.15"><div class="help">没取到版本列表（面板版本太旧或都离线），可手动填写</div>{% endif %}</div></div>
+  <div class="row"><label class="l">金丝雀</label><div><select name="canary">{% for x in servers if x.status == 'online' and not x.maintenance %}<option value="{{ x.id }}">{{ x.name }}</option>{% endfor %}</select><div class="help">先升级这一台，建议选用户少的</div></div></div>
+  <div class="row"><label class="l">要升级的服务器</label><div>{% for x in servers %}<label style="display:inline-block;margin-right:12px"><input type="checkbox" name="server_ids" value="{{ x.id }}" {{ 'checked' if x.status == 'online' and not x.maintenance }}> {{ x.name }}</label>{% endfor %}</div></div>
+  <div class="row"><label class="l">观察时间</label><div><input type="number" name="observe" value="30" min="0" style="width:90px"> 分钟<div class="help">金丝雀升级后等这么久，期间没问题再升其余的。每台升级后都会检查 Xray 是否运行、版本是否正确、线路能否握手；不通过就装回原版本并暂停。</div></div></div>
+  <div class="row"><span></span><div><button class="btn p">开始</button></div></div>
+</form>{% endif %}
+<div class="card"><h2>记录</h2>
+{% for r in rollouts %}{% set prog = r.progress|fromjson %}
+<div style="border-top:1px solid var(--line);padding:10px 0">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>{{ r.version }}</b>
+  <span class="tag {{ {'running':'ok','paused':'warn','failed':'err','done':'ok','cancelled':''}.get(r.status, '') }}">{{ {'running':'进行中','paused':'已暂停','done':'完成','cancelled':'已取消','failed':'失败'}.get(r.status, r.status) }}</span>
+  <span class="muted small">{{ fmt_dt(r.created_at) }} · {{ r.operator }}</span><span class="sp" style="flex:1"></span>
+  {% if r.status == 'paused' %}<form method="post"><input type="hidden" name="act" value="resume"><input type="hidden" name="id" value="{{ r.id }}"><button class="btn sm p">继续</button></form>{% endif %}
+  {% if r.status in ('running', 'paused') %}<form method="post" data-confirm="取消这次升级？已升级的服务器不会自动降级。"><input type="hidden" name="act" value="cancel"><input type="hidden" name="id" value="{{ r.id }}"><button class="btn sm">取消</button></form>{% endif %}</div>
+  {% if r.note %}<div class="small" style="margin:6px 0">{{ r.note }}</div>{% endif %}
+  <div class="small">{% for sid in r.server_ids|fromjson %}{% set p = prog.get(sid|string, {}) %}<span class="tag {{ {'ok':'ok','failed':'err','installing':'warn','skipped':''}.get(p.state, '') }}" title="{{ p.msg or '' }}">{{ names.get(sid, sid) }}{% if sid == r.canary_id %}（金丝雀）{% endif %} · {{ {'pending':'等待','installing':'升级中','ok':'完成','failed':'失败','skipped':'跳过'}.get(p.state, p.state) }}</span> {% endfor %}</div>
+</div>{% else %}<p class="muted">还没有</p>{% endfor %}</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block h1 %}国内探针{% endblock %}{% block body %}
+{% if cmd %}<div class="card" style="border-color:var(--c)"><h2>在这台路由器上用 SSH 粘贴执行</h2>
+<div class="cmd"><pre id="cmd">{{ cmd }}</pre><button class="btn" onclick="copyText('cmd',this)">复制</button></div>
+<p class="muted small">适用于 OpenWrt / KWRT（需要能访问控制台，建议走 Tailscale）。装好后每 5 分钟测一次所有线路并回报。命令里含令牌，只显示这一次。</p></div>{% endif %}
+<div class="card"><h2>探针</h2>
+<p class="muted small">用分布在各地的路由器，按移动 / 联通 / 电信测每条线路。至少 2 个探针都不通、控制台（海外）却是通的 → 大概率被封，告警并提示“一键换 IP”，开了自动摘除时先从订阅去掉；某个运营商全不通 → 告警，并在订阅里把这条线路排到同组后面。Hysteria2（UDP）和走 Cloudflare 的线路不测。</p>
+<div class="tbl"><table><thead><tr><th>名称</th><th>运营商</th><th>地区</th><th>最近回报</th><th>IP</th><th></th></tr></thead><tbody>
+{% for p in probes %}<tr><td>{{ p.name }}</td><td>{{ p.isp }}</td><td>{{ p.region }}</td><td>{{ fmt_dt(p.last_seen_at) }}</td><td class="small">{{ p.last_ip }}</td>
+<td><form method="post" data-confirm="删除这个探针？"><input type="hidden" name="act" value="delete"><input type="hidden" name="id" value="{{ p.id }}"><button class="btn sm d">删除</button></form></td></tr>
+{% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">还没有探针</td></tr>{% endfor %}</tbody></table></div></div>
+<form method="post" class="f card"><h2>添加探针</h2><input type="hidden" name="act" value="add">
+  <div class="row"><label class="l">名称</label><div><input type="text" name="name" placeholder="广州移动-1"></div></div>
+  <div class="row"><label class="l">运营商</label><div><select name="isp"><option>移动</option><option>联通</option><option>电信</option><option>其它</option></select></div></div>
+  <div class="row"><label class="l">地区</label><div><input type="text" name="region" placeholder="广东"></div></div>
+  <div class="row"><label class="l">控制台地址</label><div><input type="text" name="console_url" value="{{ console }}" placeholder="http://100.64.0.2:54321"><div class="help">路由器能访问到的控制台地址（Tailscale 内网地址）</div></div></div>
+  <div class="row"><span></span><div><button class="btn p">生成安装命令</button></div></div>
+</form>
+{% if probes %}<div class="card"><h2>最近 1 小时结果</h2>
+<form method="post" style="margin-bottom:8px"><input type="hidden" name="act" value="analyze"><button class="btn sm">重新分析</button></form>
+<div class="tbl"><table><thead><tr><th>线路</th>{% for p in probes %}<th>{{ p.name }}</th>{% endfor %}<th>判断</th></tr></thead><tbody>
+{% for l in lines %}<tr><td>{{ l.name }}</td>
+{% for p in probes %}{% set r = m.get((l.id, p.id)) %}<td>{% if r is none %}<span class="muted">—</span>{% elif r.ok %}<span class="tag ok">{{ r.latency_ms }}ms</span>{% else %}<span class="tag err">不通</span>{% endif %}</td>{% endfor %}
+<td>{% if l.gfw_blocked %}<span class="tag err">疑似被封，已摘除</span>{% elif l.gfw_suspect %}<span class="tag err">疑似被封（自动摘除已关）</span>{% elif l.isp_bad %}<span class="tag warn">{{ l.isp_bad }} 不通</span>{% else %}<span class="muted small">正常</span>{% endif %}</td></tr>
+{% endfor %}</tbody></table></div></div>{% endif %}
+{% endblock %}

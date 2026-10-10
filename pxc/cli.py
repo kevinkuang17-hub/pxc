@@ -66,7 +66,7 @@ def main(argv=None):
             return 1
         pw = args.password or secrets.token_urlsafe(12)
         auth.set_password(u, pw)
-        u.failed_count, u.locked_until = 0, None
+        u.failed_count, u.locked_until, u.enabled = 0, None, True     # 命令行救援：同时解锁、启用
         s.commit()
         print(json.dumps({"username": u.username, "password": pw}, ensure_ascii=False))
     elif args.cmd == "reset-2fa":
@@ -76,6 +76,8 @@ def main(argv=None):
             print("没有这个账号")
             return 1
         auth.reset_totp(u)
+        from .models import AdminPasskey
+        s.query(AdminPasskey).filter_by(admin_id=u.id).delete()
         u.failed_count, u.locked_until = 0, None
         s.commit()
         print(f"已重置 {u.username} 的二次认证，下次登录会要求重新绑定")

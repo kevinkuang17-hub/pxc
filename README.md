@@ -17,7 +17,7 @@
 | F10 CRM 对接 | REST 接口、Webhook（带签名、重试）、60 秒一次性免登，见 [docs/API.md](docs/API.md) |
 | F11 一键配置 | 一键接入新服务器（单行命令：装 3X-UI、随机面板端口/路径/账号、面板只对控制台开放、可选 Tailscale、可选 Cloudflare DNS 证书、BBR、自动注册）；一键建线路；一键加落地；一键客户端导入链接 |
 | F14 登录安全 | 随机登录路径、未登录一律 404；强制 TOTP + 10 个备用码；30 天可信设备；5 次错误锁 15 分钟；IP 白名单；会话管理/强制下线；8 小时无操作退出；敏感操作再验证；新 IP 登录告警；外观（名称、Logo、图标、登录背景、主题色、页脚） |
-| 部署 | 一条命令安装控制台 / 订阅服务；`pxc` 中文管理菜单；升级前自动备份、可回退；每天自动备份数据库；GitHub Actions 自动算版本号、出测试版、手动转稳定版 |
+| 部署 | 一条命令从 GitHub 安装控制台；订阅服务 / 新服务器 / 国内探针由控制台生成单行命令；`pxc` 中文管理菜单；升级前自动备份、可回退；每天自动备份数据库；GitHub Actions 测试通过才自动发布 |
 
 ### v0.2.0 新增
 
@@ -43,32 +43,37 @@
 - **兼容新版 3X-UI 用户接口**：新版 3X-UI 把用户接口挪到了 `/panel/api/clients/`，控制台自动识别，新旧版本都能推送。
 - 生成的 VLESS（TCP+TLS+Vision / XHTTP / Reality）、Trojan、Hysteria2 配置都用真实 Xray 内核跑通过（服务端 + 客户端互通）。
 
-**下一版**：路由器分运营商探针（接你的 KWRT 监控）、Hysteria2 线路的自动摘除（现在只在 3 小时一次的实测里发现问题）、Surge / QX / Loon 订阅、多管理员角色、Passkey、应用/国家维度报表、TUIC / AnyTLS（需要 sing-box 节点）。
+### v0.4.0
+
+- **国内分运营商探针**：「国内探针」页生成一行命令，在各地的 KWRT / OpenWrt 路由器上执行。路由器每 5 分钟测一遍所有线路（TLS / TCP 握手），回报控制台。至少 2 个探针都不通、而控制台（海外）测得通 → 判断为被封，告警并提示“一键换 IP”，开了自动摘除就先从订阅去掉，国内恢复（或探针都没有新数据）后自动加回；某个运营商全不通 → 告警，并在订阅里把这条线路排到同组后面。
+- **Hysteria2 自动摘除**：每 5 分钟用本机 Xray 经 Hysteria2 线路实际请求一次，连续 3 次失败从订阅摘除、恢复后加回。
+- **更多客户端**：订阅新增 Stash、Surge、Loon、Quantumult X（浏览器引导页有一键导入）。Surge / Loon / QX 不支持 Reality、XHTTP、gRPC 和 Vision，只下发它们能用的线路；没有 geosite 的客户端，广告 / AI / 流媒体分类自动换成公开规则列表。
+- **保守模式**：敏感时期在「监控与核对」点“保守模式：开”，所有订阅只保留 Reality 和走 Cloudflare 的线路；单个订阅地址加 `&safe=1` 也行。
+- **多管理员**：「管理员」页添加账号，三种角色：超级管理员（全部）、运维（不能动管理员 / 安全与对接 / 外观通知 / Cloudflare 账号）、只读客服（只能看，看不到密钥、不能导出）。可停用（立即下线）、重置密码、重置两步验证；至少保留一个超级管理员。
+- **通行密钥（Passkey）**：右上角用户名 →「我的账号」添加，之后登录第二步和敏感操作可以用指纹 / 面容 / Windows Hello 代替 6 位码（浏览器要求控制台用 HTTPS 域名打开）。也可在这里改自己的密码。
+- **按应用流量**（默认关，在「外观与通知」打开）：把 AI / 视频 / 社交 / 下载更新的流量分开计数，报表里看。只统计从服务器直接出去的流量；规则放在路由表最后、出站复制默认出口的设置，出口不会变。
+- **异常检测**：在线设备数超过上限、流量突增（24 小时超过平时日均 5 倍）、订阅被很多 IP 拉取（疑似外泄，可选自动换订阅地址），都会告警并在报表页列出。
+- **VPS 成本**：服务器资料里填商家、月费、下次续费日期；报表页算每 GB 成本，续费前 7 天、1 天提醒。
+- **运营日报 / 周报**：每天（或每周一）定时发到 Telegram 和 Webhook：流量、用量前五、离线服务器、摘除的线路、即将到期、续费、成本、异常次数。
+- **配置历史**：服务器详情 →「配置历史」，每次推送和巡检发现变化都记一版（密钥只留后 4 位），可以逐行对比两版差异。
+- **内核灰度升级**：「内核升级」页选版本 → 先升一台金丝雀，观察 30 分钟没问题再逐台升级；每台升级后检查 Xray 运行、版本、线路握手，不通过自动装回原版本并暂停。
+- **一键部署改为直接从 GitHub 安装**，不用上传任何文件；也提供 Docker Compose 方式。
 
 ---
 
 ## 一、安装控制台
 
-装在一台**不对用户公开**的服务器上（PRD 待定问题 1：可以和现在的 3X-UI 主控同机，端口不冲突即可）。
-
-**方式 A：直接用安装包（最快）**
-
-把 `pxc-v0.3.0.tar.gz` 传到服务器 `/root/`（WinSCP、或你平时 `scp` 的方式），然后 SSH 登录服务器，用 root 粘贴这一行：
+装在一台**不对用户公开**的服务器上（PRD 待定问题 1：可以和现在的 3X-UI 主控同机，端口不冲突即可）。SSH 登录服务器，用 root 粘贴这一行（和装 3X-UI 一样，不用上传任何文件）：
 
 ```
-cd /root && tar xzf pxc-v0.3.0.tar.gz && bash pxc-release/scripts/install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/kevinkuang19009-coder/pxc/main/scripts/install.sh)
 ```
 
-**方式 B：GitHub 自动发布（以后升级只需 `pxc update`）**
+以后升级：服务器上输入 `pxc update`（或再执行一次上面这行）。升级只换程序，数据、配置、密钥都不动；升级前自动完整备份，升级后核对数据条数，不对就自动还原。
 
-1. 在 GitHub 建一个**私有**仓库放源码（如 `pxc`），再建一个**公开**仓库只放安装包（如 `pxc-release`）。
-2. 把本项目推到私有仓库。仓库 Settings → Variables 加 `RELEASE_REPO = 你的账号/pxc-release`；Settings → Secrets 加 `RELEASE_TOKEN`（对 pxc-release 有 Contents 读写权限的 fine-grained token）。
-3. 每次推送到 main：自动跑测试 → 算版本号（`fix:` 加修订号、`feat:` 加次版本、`!:`/`BREAKING` 加主版本）→ 发布为“测试版”。在测试服务器验证后，到 Actions 手动运行 release，`promote` 填 `yes` 转成稳定版。
-4. 服务器安装：
+代码推到 GitHub 的 main 分支后，GitHub Actions 会自动跑全部测试（含真实 Xray 互通），通过才发布新版本；测试不过不会发布，服务器上的 `pxc update` 只会拿到测试通过的版本。
 
-```
-bash <(curl -fsSL https://github.com/你的账号/pxc-release/releases/latest/download/install.sh)
-```
+**Docker 方式（可选）**：`git clone https://github.com/kevinkuang19009-coder/pxc && cd pxc && cp docker/env.example .env`，改 `.env` 里的登录路径，然后 `docker compose up -d --build`，再执行 `docker compose exec web python -m pxc.cli create-admin admin` 拿到初始密码。数据在 `./data`。
 
 安装完会打印 **登录地址、账号、随机密码**。第一次登录必须用手机验证器（Google Authenticator / Microsoft Authenticator / 1Password）绑定，并保存 10 个备用码。
 
@@ -98,7 +103,7 @@ bash <(curl -fsSL https://github.com/你的账号/pxc-release/releases/latest/do
 
 订阅服务不存数据，每 20 秒从控制台只读同步并缓存到本地；控制台连不上时继续用缓存出订阅。IP 被封：新机器上再执行一次第 1–2 步，改 DNS 即可。旧 3X-UI 订阅地址 `/sub/<subId>` 继续可用，用户不用改（3X-UI 里订阅路径改过的话，在订阅服务器执行 `pxc legacy-path /你的路径/`）。
 
-订阅地址格式：`https://订阅域名/s/<16位令牌>`，可加 `?target=clash|singbox|v2ray|shadowrocket`；OpenClash 只要节点用 `?target=clash&nodes=1`（proxy-provider）。
+订阅地址格式：`https://订阅域名/s/<16位令牌>`，可加 `?target=clash|singbox|v2ray|shadowrocket|stash|surge|loon|qx`，加 `&safe=1` 只要 Reality / CDN 线路；OpenClash 只要节点用 `?target=clash&nodes=1`（proxy-provider）。
 
 ## 四、新服务器一键接入
 
@@ -119,7 +124,9 @@ bash <(curl -fsSL https://github.com/你的账号/pxc-release/releases/latest/do
 
 - **3X-UI 接口版本**：按 3X-UI 2.x/3.x 公开的 `/panel/api/` 接口和 `/panel/xray/` 模板接口实现（旧路径自动兜底）。上线前在 HK D 上跑一次「测试连接 → 导入这台的配置 → 立即比对」，差异应为 0；若报“面板没有这个接口”，把报错发我。
 - **3X-UI 会自动把入站 tag 设成 `inbound-端口`**，控制台的稳定标签写在入站备注里，路由规则推送时按当前端口换算，所以改端口不会丢规则。
-- Shadowrocket 与 Reality 的兼容、各客户端实测矩阵（PRD F15）还需要逐个用最新版验证。
+- Shadowrocket 与 Reality 的兼容、各客户端实测矩阵（PRD F15）还需要逐个用最新版验证；Surge / Loon / Quantumult X 的配置按各自官方格式生成，没有在真机上测过，第一次用请先导入一个账号试一下。
+- 按应用流量要求 3X-UI 有“出站流量”功能（2.x 新版本 / 3.x）；设备超限检测要求 3X-UI 开了 IP 记录（“IP 限制”用到的访问日志）。
+- 内核灰度升级调用 3X-UI 面板“切换 Xray 版本”接口，建议先拿用户最少的一台做金丝雀。
 - PRD 待定问题 2（套餐划分）、3（告警发 Telegram 还是企业微信）：本版支持 Telegram 和 CRM Webhook，企业微信可由 CRM 接 Webhook 转发。
 
 ## 开发

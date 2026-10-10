@@ -34,7 +34,8 @@ def build_snapshot():
     for lid, l in lines.items():
         n = node_of(l)
         if n:
-            n["order"] = list(order_key.get(lid, (99999, 999, l.name)))
+            o = list(order_key.get(lid, (99999, 999, l.name)))
+            n["order"] = [o[0], 1 if l.isp_bad else 0] + o[1:]      # 某运营商下不通的线路在同组里排后面
             nodes[str(lid)] = n
     from .rules import client_rule_spec, rulesets_meta
     gl = _group_lines(s)
@@ -58,6 +59,7 @@ def build_snapshot():
             "sub_update_hours": int(get_setting("sub_update_hours", "12") or 12),
             "theme_color": get_setting("theme_color", "#2563eb"),
             "sub_footer": get_setting("footer_text", ""),
+            "conservative": get_setting("conservative_mode", "0") == "1",
         },
         "groups": [{"id": g.id, "name": g.name, "strategy": g.strategy,
                     "lines": [str(m.line_id) for m in sorted(g.members, key=lambda m: (m.priority, m.line.name))]}
@@ -68,11 +70,12 @@ def build_snapshot():
     }
 
 
-def node_of(line):
-    """把一条线路变成客户端连接参数；不可用（停用/服务器离线/维护）返回 None。"""
+def node_of(line, ignore_down=False):
+    """把一条线路变成客户端连接参数；不可用（停用/服务器离线/维护）返回 None。
+    ignore_down=True：已被自动摘除的线路也返回（探测它是否恢复时用）。"""
     from . import crypto
     inb = line.entry
-    if not line.enabled or line.auto_down or not inb or not inb.enabled or inb.kind != "entry":
+    if not line.enabled or (not ignore_down and (line.auto_down or line.gfw_blocked)) or not inb or not inb.enabled or inb.kind != "entry":
         return None
     srv = inb.server
     if srv.maintenance or srv.status == "offline":
@@ -93,6 +96,7 @@ def node_of(line):
         "port": inb.client_port or inb.port, "network": inb.transport, "security": inb.security,
         "sni": "", "fp": "chrome", "path": inb.path or "", "host": inb.host or "",
         "vision": inb.protocol == "vless" and inb.transport == "tcp" and inb.security in ("tls", "reality"),
+        "cdn": bool(inb.client_address),
     }
     if inb.security == "tls":
         n["sni"] = inb.tls_sni or srv.domain
@@ -109,20 +113,26 @@ def node_of(line):
 
 # ======================= 渲染（订阅服务 / 控制台共用） =======================
 
-FORMATS = ("v2ray", "clash", "singbox", "shadowrocket")
+FORMATS = ("v2ray", "clash", "singbox", "shadowrocket", "stash", "surge", "loon", "qx")
 
 
 def detect_format(target, ua, default=""):
     t = (target or "").lower()
-    alias = {"clash": "clash", "mihomo": "clash", "meta": "clash", "stash": "clash", "singbox": "singbox",
-             "sing-box": "singbox", "v2ray": "v2ray", "base64": "v2ray", "shadowrocket": "shadowrocket"}
+    alias = {"clash": "clash", "mihomo": "clash", "meta": "clash", "stash": "stash", "singbox": "singbox",
+             "sing-box": "singbox", "v2ray": "v2ray", "base64": "v2ray", "shadowrocket": "shadowrocket",
+             "surge": "surge", "loon": "loon", "qx": "qx", "quantumultx": "qx", "quantumult": "qx"}
     if t in alias:
         return alias[t]
     u = (ua or "").lower()
-    if u.startswith("mozilla") and not any(k in u for k in ("clash", "shadowrocket", "sing-box", "hiddify")):
+    apps = ("clash", "shadowrocket", "sing-box", "hiddify", "stash", "surge", "loon", "quantumult")
+    if u.startswith("mozilla") and not any(k in u for k in apps):
         return "html"
     for keys, fmt in ((("shadowrocket",), "shadowrocket"),
-                      (("clash", "mihomo", "stash", "openclash", "verge", "flclash"), "clash"),
+                      (("stash",), "stash"),
+                      (("surge",), "surge"),
+                      (("quantumult",), "qx"),
+                      (("loon",), "loon"),
+                      (("clash", "mihomo", "openclash", "verge", "flclash"), "clash"),
                       (("sing-box", "sfa", "sfi", "sfm", "hiddify", "karing"), "singbox"),
                       (("v2rayn", "v2rayng", "happ", "v2box", "streisand", "nekobox", "v2ray"), "v2ray")):
         if any(k in u for k in keys):
@@ -130,19 +140,38 @@ def detect_format(target, ua, default=""):
     return default if default in FORMATS else "v2ray"
 
 
-def _supported(fmt, n):
+# Surge / Loon / Quantumult X 只支持常见组合：这些客户端拿到的线路会少一些（引导页有说明）
+APPLE_PROTOCOLS = {"surge": {"shadowsocks", "vmess", "trojan", "hysteria"},
+                   "loon": {"shadowsocks", "vmess", "trojan", "vless", "hysteria"},
+                   "qx": {"shadowsocks", "vmess", "trojan", "vless"}}
+
+
+def _supported(fmt, n, c=None):
     if fmt == "shadowrocket" and n["security"] == "reality":
         return False   # 当前 Shadowrocket 与 Xray Reality 不兼容
-    if fmt == "singbox" and n["network"] == "xhttp":
-        return False   # sing-box 没有 XHTTP
+    if fmt in ("singbox", "stash") and n["network"] == "xhttp":
+        return False   # sing-box / Stash 没有 XHTTP
+    if fmt in APPLE_PROTOCOLS:
+        if n["protocol"] not in APPLE_PROTOCOLS[fmt] or n["security"] == "reality":
+            return False
+        if n["protocol"] != "hysteria" and n["network"] not in ("tcp", "ws"):
+            return False
+        if n["protocol"] == "vless" and n["vision"] and (c or {}).get("vision"):
+            return False   # 服务器要求 Vision 流控，这几个客户端不支持
     return True
 
 
-def client_nodes(snap, c, fmt):
+def conservative_ok(n):
+    """保守模式（敏感时期）：只保留 Reality 和走 CDN 的线路。"""
+    return n.get("security") == "reality" or bool(n.get("cdn"))
+
+
+def client_nodes(snap, c, fmt, conservative=False):
     if not c["active"]:
         return []
+    conservative = conservative or (snap.get("settings") or {}).get("conservative")
     nodes = [(lid, snap_node(snap, lid)) for lid in c["lines"]]
-    nodes = [(lid, n) for lid, n in nodes if n and _supported(fmt, n)]
+    nodes = [(lid, n) for lid, n in nodes if n and _supported(fmt, n, c) and (not conservative or conservative_ok(n))]
     nodes.sort(key=lambda x: (x[1]["order"], x[1]["name"]))
     return nodes
 
@@ -160,18 +189,26 @@ def _hint(text):
             "security": "none", "sni": "", "fp": "chrome", "path": "", "host": "", "vision": False}
 
 
-def render(snap, c, fmt, nodes_only=False, base_url=""):
+def render(snap, c, fmt, nodes_only=False, base_url="", conservative=False):
     """返回 (body, content_type)。base_url 用来生成规则文件地址（订阅服务自己托管）。"""
-    nodes = [n for _, n in client_nodes(snap, c, fmt)]
+    nodes = [n for _, n in client_nodes(snap, c, fmt, conservative)]
     if not c["active"]:
         reason = {"quota": "流量已用完", "expired": "已到期"}.get(c["reason"], "已停用")
         nodes = [_hint(f"⚠ {reason}，请联系管理员")]
     elif not nodes:
         nodes = [_hint("⚠ 当前客户端无可用线路，请换 Happ / Clash Verge")]
-    if fmt == "clash":
-        return render_clash(snap, c, nodes, nodes_only, base_url), "text/yaml; charset=utf-8"
+        if conservative or (snap.get("settings") or {}).get("conservative"):
+            nodes = [_hint("⚠ 保守模式下暂无可用线路，请联系管理员")]
+    if fmt in APPLE_PROTOCOLS and nodes and nodes[0]["address"] == "127.0.0.1":
+        nodes = [dict(n, protocol="shadowsocks", method="aes-128-gcm", password="none") for n in nodes]
+    if fmt in ("clash", "stash"):
+        return render_clash(snap, c, nodes, nodes_only, base_url, stash=fmt == "stash",
+                            conservative=conservative), "text/yaml; charset=utf-8"
+    if fmt in ("surge", "loon", "qx"):
+        from . import sub_apple
+        return sub_apple.render(fmt, snap, c, nodes, nodes_only, base_url, conservative), "text/plain; charset=utf-8"
     if fmt == "singbox":
-        return render_singbox(snap, c, nodes, base_url), "application/json; charset=utf-8"
+        return render_singbox(snap, c, nodes, base_url, conservative), "application/json; charset=utf-8"
     links = "\n".join(filter(None, (v2ray_link(n, c) for n in nodes)))
     return base64.b64encode(links.encode()).decode(), "text/plain; charset=utf-8"
 
@@ -280,23 +317,44 @@ def _rules_for(snap, c, gnames, nodes=()):
     regions = {n.get("region") for n in nodes if n.get("region")}
     items = rule_list(spec, gnames, snap.get("rulesets", {}), regions)
     region_groups, out = {}, []
+    node_names = {n.get("name") for n in nodes}
     for kind, val, pol in items:
         if pol and pol.startswith(REGION_PREFIX):
             code = pol[len(REGION_PREFIX):]
             if code not in region_groups:
-                members = region_members(code, gnames, nodes)
-                region_groups[code] = (f"{FLAGS.get(code, '🌐')} {code}", members)
-            pol = region_groups[code][0] if region_groups[code][1] else None
+                name = f"{FLAGS.get(code, '🌐')} {code}"
+                if name in gnames:
+                    region_groups[code] = (name, None)       # 已经有同名的线路组：直接用它，不再另建
+                else:
+                    if name in node_names:
+                        name += " 组"
+                    region_groups[code] = (name, region_members(code, gnames, nodes))
+            name, members = region_groups[code]
+            pol = name if (members is None or members) else None
         out.append((kind, val, pol))
     return out, {k: v for k, v in region_groups.items() if v[1]}
 
 
-def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
+LAN_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16"]
+# 没有 geosite 的客户端（Stash / Surge / Loon / Quantumult X）：geosite 分类换成 blackmatrix7 的规则列表
+BM7 = {"category-ads-all": "Advertising", "openai": "OpenAI", "anthropic": "Claude", "google-gemini": "Gemini",
+       "netflix": "Netflix", "youtube": "YouTube", "disney": "Disney", "microsoft": "Microsoft"}
+BM7_BASE = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule"
+
+
+def bm7_url(app, site):
+    name = BM7.get(site)
+    if not name:
+        return None
+    return f"{BM7_BASE}/{app}/{name}/{name}." + ("yaml" if app == "Clash" else "list")
+
+
+def render_clash(snap, c, nodes, nodes_only=False, base_url="", stash=False, conservative=False):
     proxies = [clash_proxy(n, c) for n in nodes]
     if nodes_only:
         return yaml.safe_dump({"proxies": proxies}, allow_unicode=True, sort_keys=False)
     names = [p["name"] for p in proxies]
-    lid_name = {lid: n["name"] for lid, n in client_nodes(snap, c, "clash")}
+    lid_name = {lid: n["name"] for lid, n in client_nodes(snap, c, "stash" if stash else "clash", conservative)}
     groups = []
     ug = _user_groups(snap, lid_name)
     for g, members in ug:
@@ -327,8 +385,17 @@ def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
                               "url": f"{base_url}/r/{val}.{ext}?v={meta[val]['hash']}",
                               "path": f"./ruleset/{tag}.txt", "interval": 86400}
             rules.append(f"RULE-SET,{tag},{p}" + (",no-resolve" if beh == "ipcidr" else ""))
+        elif stash and kind == "GEOIP" and val == "private":
+            rules += [f"IP-CIDR,{x},{p},no-resolve" for x in LAN_CIDRS]
         elif kind == "GEOIP":
             rules.append(f"GEOIP,{val},{p},no-resolve" if val == "private" else f"GEOIP,{val},{p}")
+        elif stash and kind == "GEOSITE":
+            url = bm7_url("Clash", val)
+            if url:
+                tag = f"bm7-{val}"
+                providers[tag] = {"type": "http", "behavior": "classical", "format": "yaml", "url": url,
+                                  "path": f"./ruleset/{tag}.yaml", "interval": 86400}
+                rules.append(f"RULE-SET,{tag},{p}")
         else:
             rules.append(f"{kind},{val},{p}")
     cfg = {
@@ -345,6 +412,11 @@ def render_clash(snap, c, nodes, nodes_only=False, base_url=""):
         "proxies": proxies,
         "proxy-groups": [main, auto] + groups,
     }
+    if stash:      # Stash 不认 mihomo 专有的 geosite DNS 写法
+        cfg["dns"] = {"default-nameserver": ["223.5.5.5", "119.29.29.29"],
+                      "nameserver": ["https://223.5.5.5/dns-query", "https://doh.pub/dns-query"]}
+        for k in ("unified-delay", "tcp-concurrent", "find-process-mode", "global-client-fingerprint"):
+            cfg.pop(k, None)
     if providers:
         cfg["rule-providers"] = providers
     cfg["rules"] = rules
@@ -386,10 +458,10 @@ def singbox_outbound(n, c):
 SB_GEOSITES = {"cn", "category-ads-all", "openai", "anthropic", "netflix", "youtube", "disney", "microsoft"}
 
 
-def render_singbox(snap, c, nodes, base_url=""):
+def render_singbox(snap, c, nodes, base_url="", conservative=False):
     outs = [singbox_outbound(n, c) for n in nodes]
     names = [o["tag"] for o in outs]
-    lid_name = {lid: n["name"] for lid, n in client_nodes(snap, c, "singbox")}
+    lid_name = {lid: n["name"] for lid, n in client_nodes(snap, c, "singbox", conservative)}
     groups = []
     for g, members in _user_groups(snap, lid_name):
         if g["strategy"] == "select":
@@ -466,6 +538,11 @@ def import_links(sub_url, name):
         ("Shadowrocket", "shadowrocket://add/sub://" + base64.b64encode(
             (sub_url + "?target=shadowrocket").encode()).decode() + f"?remark={q(name)}", "iOS / macOS"),
         ("v2rayNG", f"v2rayng://install-sub?url={q(sub_url)}&name={q(name)}", "Android"),
+        ("Stash", f"stash://install-config?url={q(sub_url + '?target=stash')}&name={q(name)}", "iOS / macOS"),
+        ("Surge", f"surge:///install-config?url={q(sub_url + '?target=surge')}", "iOS / macOS（少数线路）"),
+        ("Loon", f"loon://import?nodelist={q(sub_url + '?target=loon&nodes=1')}", "iOS（少数线路）"),
+        ("Quantumult X", "quantumult-x:///add-resource?remote-resource=" + q(json.dumps(
+            {"server_remote": [f"{sub_url}?target=qx&nodes=1, tag={name}"]}, ensure_ascii=False)), "iOS（少数线路）"),
     ]
 
 
