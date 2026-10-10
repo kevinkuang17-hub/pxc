@@ -1,0 +1,718 @@
+From f68e81fc2d435773c7cbe8ea835f8591b3ea5a6a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 11 Oct 2026 01:51:42 +0800
+Subject: [PATCH] feat: one-click Clash routing presets (Aethersailor), publish
+ from this fork
+
+- Settings > Subscription > Clash: preset selector fills routing URL, enables Clash sub + routing, hourly refresh
+- install/update/x-ui scripts and panel updater point at kevinkuang17-hub/3x-ui
+- release workflow publishes stable releases on tags (also via dispatch); daily upstream sync
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LTqKFRdgxMVPE4My9yHGuq
+---
+ .github/workflows/release.yml                 |  8 ++--
+ .github/workflows/sync-upstream.yml           | 45 +++++++++++++++++++
+ .../pages/settings/SubscriptionGeneralTab.tsx | 35 +++++++++++++++
+ .../src/pages/settings/clashRoutingPresets.ts | 19 ++++++++
+ install.sh                                    | 22 ++++-----
+ internal/web/service/panel/panel.go           |  6 +--
+ internal/web/translation/ar-EG.json           | 10 ++++-
+ internal/web/translation/en-US.json           | 10 ++++-
+ internal/web/translation/es-ES.json           | 10 ++++-
+ internal/web/translation/fa-IR.json           | 10 ++++-
+ internal/web/translation/id-ID.json           | 10 ++++-
+ internal/web/translation/ja-JP.json           | 10 ++++-
+ internal/web/translation/pt-BR.json           | 10 ++++-
+ internal/web/translation/ru-RU.json           | 10 ++++-
+ internal/web/translation/tr-TR.json           | 10 ++++-
+ internal/web/translation/uk-UA.json           | 10 ++++-
+ internal/web/translation/vi-VN.json           | 10 ++++-
+ internal/web/translation/zh-CN.json           | 10 ++++-
+ internal/web/translation/zh-TW.json           | 10 ++++-
+ update.sh                                     | 18 ++++----
+ x-ui.sh                                       | 12 ++---
+ 21 files changed, 249 insertions(+), 46 deletions(-)
+ create mode 100644 .github/workflows/sync-upstream.yml
+ create mode 100644 frontend/src/pages/settings/clashRoutingPresets.ts
+
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 3afb3ef9..d3168bc2 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -188,14 +188,14 @@ jobs:
+ 
+       - name: Upload files to GH release
+         uses: svenstaro/upload-release-action@v2
+-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
++        if: startsWith(github.ref, 'refs/tags/')
+         with:
+           repo_token: ${{ secrets.GITHUB_TOKEN }}
+           tag: ${{ github.ref_name }}
+           file: x-ui-linux-${{ matrix.platform }}.tar.gz*
+           file_glob: true
+           overwrite: true
+-          prerelease: true
++          prerelease: false
+ 
+   # =================================
+   #  Windows Build
+@@ -324,14 +324,14 @@ jobs:
+ 
+       - name: Upload files to GH release
+         uses: svenstaro/upload-release-action@v2
+-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
++        if: startsWith(github.ref, 'refs/tags/')
+         with:
+           repo_token: ${{ secrets.GITHUB_TOKEN }}
+           tag: ${{ github.ref_name }}
+           file: x-ui-windows-amd64.zip*
+           file_glob: true
+           overwrite: true
+-          prerelease: true
++          prerelease: false
+ 
+   # =================================
+   #  Rolling dev channel (per-commit)
+diff --git a/.github/workflows/sync-upstream.yml b/.github/workflows/sync-upstream.yml
+new file mode 100644
+index 00000000..2c5f25fa
+--- /dev/null
++++ b/.github/workflows/sync-upstream.yml
+@@ -0,0 +1,45 @@
++# 每天检查官方 3X-UI 有没有发新版本：有就合并到本仓库（保留我们的修改），打同名标签并编译发布，
++# 服务器上 x-ui update / 面板里的“更新”就能拿到“官方新版 + 我们的修改”。合并冲突时会失败并发邮件提醒。
++name: sync-upstream
++on:
++  schedule:
++    - cron: "23 21 * * *"
++  workflow_dispatch:
++    inputs:
++      tag:
++        description: "手动指定要发布的版本标签（留空=官方最新版）"
++        required: false
++permissions:
++  contents: write
++  actions: write
++jobs:
++  sync:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with: { fetch-depth: 0 }
++      - name: 合并官方最新版本
++        env:
++          GH_TOKEN: ${{ github.token }}
++        run: |
++          set -e
++          git config user.name "sync-bot"
++          git config user.email "sync-bot@users.noreply.github.com"
++          git remote add upstream https://github.com/MHSanaei/3x-ui.git
++          git fetch upstream --tags --force
++          TAG="${{ github.event.inputs.tag }}"
++          if [ -z "$TAG" ]; then
++            TAG=$(curl -fsSL https://api.github.com/repos/MHSanaei/3x-ui/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
++          fi
++          [ -n "$TAG" ] || { echo "取不到官方版本号"; exit 1; }
++          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ -z "${{ github.event.inputs.tag }}" ]; then
++            echo "已经发布过 $TAG"; exit 0
++          fi
++          if ! git merge-base --is-ancestor "refs/tags/$TAG" HEAD; then
++            git merge --no-edit "refs/tags/$TAG" || { echo "合并 $TAG 有冲突，需要人工处理"; exit 1; }
++            git push origin HEAD:main
++          fi
++          git tag -f "$TAG"
++          git push -f origin "refs/tags/$TAG"
++          # GITHUB_TOKEN 推的标签不会自动触发编译，这里手动触发
++          gh workflow run release.yml -R "$GITHUB_REPOSITORY" --ref "$TAG"
+diff --git a/frontend/src/pages/settings/SubscriptionGeneralTab.tsx b/frontend/src/pages/settings/SubscriptionGeneralTab.tsx
+index 61cb72c9..cd0a8c17 100644
+--- a/frontend/src/pages/settings/SubscriptionGeneralTab.tsx
++++ b/frontend/src/pages/settings/SubscriptionGeneralTab.tsx
+@@ -21,6 +21,7 @@ import { sanitizePath, normalizePath } from './uriPath';
+ import HappSettingsContent from './HappSettingsContent';
+ import IncySettingsContent from './IncySettingsContent';
+ import { remoteSourceBadge } from './subscriptionShared';
++import { CLASH_ROUTING_PRESETS, presetOf } from './clashRoutingPresets';
+ 
+ interface SubscriptionGeneralTabProps {
+   allSetting: AllSetting;
+@@ -422,6 +423,40 @@ export default function SubscriptionGeneralTab({
+           label: catTabLabel(<NodeIndexOutlined />, 'Clash / Mihomo', isMobile),
+           children: (
+             <>
++              <SettingListItem
++                paddings="small"
++                title={t('pages.settings.subClashPreset')}
++                description={t('pages.settings.subClashPresetDesc')}
++              >
++                <Select
++                  style={{ width: '100%' }}
++                  value={presetOf(allSetting.subClashRules)?.key}
++                  placeholder={t('pages.settings.subClashPresetPlaceholder')}
++                  options={CLASH_ROUTING_PRESETS.map((p) => ({
++                    value: p.key,
++                    label: t(`pages.settings.subClashPreset_${p.key}`),
++                  }))}
++                  onChange={(key: string) => {
++                    const preset = CLASH_ROUTING_PRESETS.find((p) => p.key === key);
++                    if (!preset) return;
++                    // One click turns on everything the preset needs; the page Save button persists it.
++                    updateSetting({
++                      subClashEnable: true,
++                      subClashEnableRouting: true,
++                      subClashRules: preset.url,
++                      subUpdates: Math.min(allSetting.subUpdates || 1, 1),
++                    });
++                  }}
++                />
++              </SettingListItem>
++              {presetOf(allSetting.subClashRules) && (
++                <Alert
++                  type="info"
++                  showIcon
++                  style={{ margin: '4px 0 8px' }}
++                  title={t('pages.settings.subClashPresetApplied')}
++                />
++              )}
+               <SettingListItem
+                 paddings="small"
+                 title={t('pages.settings.subClashEnableRouting')}
+diff --git a/frontend/src/pages/settings/clashRoutingPresets.ts b/frontend/src/pages/settings/clashRoutingPresets.ts
+new file mode 100644
+index 00000000..aa68fa9e
+--- /dev/null
++++ b/frontend/src/pages/settings/clashRoutingPresets.ts
+@@ -0,0 +1,19 @@
++// Remote Clash routing docs converted daily from Aethersailor/Custom_OpenClash_Rules (CC BY-SA 4.0).
++const BASE = 'https://raw.githubusercontent.com/kevinkuang17-hub/pxc/main/rules/3x-ui/';
++
++export interface ClashRoutingPreset {
++  key: 'standard' | 'lite' | 'full' | 'gfw';
++  url: string;
++}
++
++export const CLASH_ROUTING_PRESETS: ClashRoutingPreset[] = [
++  { key: 'standard', url: `${BASE}standard.yaml` },
++  { key: 'lite', url: `${BASE}lite.yaml` },
++  { key: 'full', url: `${BASE}full.yaml` },
++  { key: 'gfw', url: `${BASE}gfw.yaml` },
++];
++
++export function presetOf(rules: string): ClashRoutingPreset | undefined {
++  const v = rules.trim();
++  return CLASH_ROUTING_PRESETS.find((p) => p.url === v);
++}
+diff --git a/install.sh b/install.sh
+index dd67e6c0..e01ec7e1 100644
+--- a/install.sh
++++ b/install.sh
+@@ -1652,13 +1652,13 @@ _install_xui_service_unit() {
+ # fails with "Failed to fetch x-ui version"), and falls back to the API.
+ resolve_latest_tag() {
+     local url tag
+-    url=$(curl -sSLI -o /dev/null -w '%{url_effective}' --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://github.com/MHSanaei/3x-ui/releases/latest" 2>/dev/null)
++    url=$(curl -sSLI -o /dev/null -w '%{url_effective}' --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://github.com/kevinkuang17-hub/3x-ui/releases/latest" 2>/dev/null)
+     tag=${url##*/tag/}
+     if [[ "$tag" != "$url" && -n "$tag" && "$tag" != "latest" ]]; then
+         echo "$tag"
+         return 0
+     fi
+-    curl -Ls --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
++    curl -Ls --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://api.github.com/repos/kevinkuang17-hub/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+ }
+ 
+ # Releases publish <asset>.sha256 next to each archive. A mismatch or a failed
+@@ -1697,7 +1697,7 @@ require_repo_files() {
+     shift
+     [[ "${ref}" == "main" ]] && return 0
+     for name in "$@"; do
+-        status=$(curl -sIL --retry 3 --connect-timeout 15 -o /dev/null -w '%{http_code}' "https://raw.githubusercontent.com/MHSanaei/3x-ui/${ref}/${name}")
++        status=$(curl -sIL --retry 3 --connect-timeout 15 -o /dev/null -w '%{http_code}' "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${ref}/${name}")
+         if [[ "${status}" != "200" ]]; then
+             echo -e "${red}${name} is not available for ${ref} (HTTP ${status})${plain}"
+             echo -e "${red}Install a release that ships it, or 'dev' for the rolling build. Your existing installation has not been touched.${plain}"
+@@ -1717,7 +1717,7 @@ install_x-ui() {
+             exit 1
+         fi
+         echo -e "Got x-ui latest version: ${tag_version}, beginning the installation..."
+-        curl -fLR --retry 5 --retry-delay 3 --connect-timeout 15 --speed-limit 1 --speed-time 300 -o ${xui_folder}-linux-$(arch).tar.gz https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
++        curl -fLR --retry 5 --retry-delay 3 --connect-timeout 15 --speed-limit 1 --speed-time 300 -o ${xui_folder}-linux-$(arch).tar.gz https://github.com/kevinkuang17-hub/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+         if [[ $? -ne 0 ]]; then
+             echo -e "${red}Downloading x-ui failed, please be sure that your server can access GitHub ${plain}"
+             exit 1
+@@ -1727,7 +1727,7 @@ install_x-ui() {
+             echo -e "${red}Downloaded x-ui release archive is empty${plain}"
+             exit 1
+         fi
+-        verify_release_checksum "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz" "${xui_folder}-linux-$(arch).tar.gz"
++        verify_release_checksum "https://github.com/kevinkuang17-hub/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz" "${xui_folder}-linux-$(arch).tar.gz"
+     else
+         tag_version=$1
+         # The rolling dev channel ships under a fixed, non-semver tag that is
+@@ -1746,7 +1746,7 @@ install_x-ui() {
+             fi
+         fi
+ 
+-        url="https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz"
++        url="https://github.com/kevinkuang17-hub/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz"
+         echo -e "Beginning to install x-ui ${tag_version}"
+         curl -fLR --retry 5 --retry-delay 3 --connect-timeout 15 --speed-limit 1 --speed-time 300 -o ${xui_folder}-linux-$(arch).tar.gz ${url}
+         if [[ $? -ne 0 ]]; then
+@@ -1773,7 +1773,7 @@ install_x-ui() {
+     require_repo_files "${script_ref}" "${required_files[@]}"
+     local xui_script_temp="/usr/bin/x-ui-temp.$$"
+     rm -f "${xui_script_temp}"
+-    curl -fLRo "${xui_script_temp}" "https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.sh"
++    curl -fLRo "${xui_script_temp}" "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.sh"
+     if [[ $? -ne 0 ]]; then
+         rm -f "${xui_script_temp}"
+         echo -e "${red}Failed to download x-ui.sh${plain}"
+@@ -1928,7 +1928,7 @@ install_x-ui() {
+     if [[ $release == "alpine" ]]; then
+         xui_rc_temp="/etc/init.d/x-ui.tmp.$$"
+         rm -f "${xui_rc_temp}"
+-        curl -fLRo "${xui_rc_temp}" "https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.rc"
++        curl -fLRo "${xui_rc_temp}" "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.rc"
+         if [[ $? -ne 0 ]]; then
+             rm -f "${xui_rc_temp}"
+             echo -e "${red}Failed to download x-ui.rc${plain}"
+@@ -1993,13 +1993,13 @@ install_x-ui() {
+             echo -e "${yellow}Service files not found in tar.gz, downloading from GitHub...${plain}"
+             case "${release}" in
+                 ubuntu | debian | armbian)
+-                    service_unit_url="https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.service.debian"
++                    service_unit_url="https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.service.debian"
+                     ;;
+                 arch | manjaro | parch)
+-                    service_unit_url="https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.service.arch"
++                    service_unit_url="https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.service.arch"
+                     ;;
+                 *)
+-                    service_unit_url="https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.service.rhel"
++                    service_unit_url="https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.service.rhel"
+                     ;;
+             esac
+ 
+diff --git a/internal/web/service/panel/panel.go b/internal/web/service/panel/panel.go
+index 62ce7d10..144fc5df 100644
+--- a/internal/web/service/panel/panel.go
++++ b/internal/web/service/panel/panel.go
+@@ -41,7 +41,7 @@ type PanelUpdateInfo struct {
+ }
+ 
+ const (
+-	panelUpdaterURL      = "https://raw.githubusercontent.com/MHSanaei/3x-ui/main/update.sh"
++	panelUpdaterURL      = "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/main/update.sh"
+ 	maxPanelUpdaterBytes = 2 << 20
+ 	// devReleaseTag is the fixed-tag rolling pre-release the CI force-moves to the
+ 	// newest main commit; the dev update channel installs from it.
+@@ -431,9 +431,9 @@ func fetchLatestPanelVersion() (string, error) {
+ // fetchPanelRelease fetches a release from GitHub. An empty tag resolves the
+ // latest stable release; a non-empty tag (e.g. dev-latest) resolves that tag.
+ func fetchPanelRelease(tag string) (*service.Release, error) {
+-	url := "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest"
++	url := "https://api.github.com/repos/kevinkuang17-hub/3x-ui/releases/latest"
+ 	if tag != "" {
+-		url = "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/" + tag
++		url = "https://api.github.com/repos/kevinkuang17-hub/3x-ui/releases/tags/" + tag
+ 	}
+ 	client := (&service.SettingService{}).NewProxiedHTTPClient(10 * time.Second)
+ 	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+diff --git a/internal/web/translation/ar-EG.json b/internal/web/translation/ar-EG.json
+index dd9d01fa..5719a28b 100644
+--- a/internal/web/translation/ar-EG.json
++++ b/internal/web/translation/ar-EG.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "رابط سيرفر DoH، غالبًا ينتهي بـ /dns-query.",
+       "subIncyResolveDnsIp": "IP سيرفر DoH",
+       "subIncyResolveDnsIpDesc": "عنوان IP لسيرفر DoH للتهيئة.",
+-      "subIncyGroupRouting": "التوجيه"
++      "subIncyGroupRouting": "التوجيه",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "احفظ",
+diff --git a/internal/web/translation/en-US.json b/internal/web/translation/en-US.json
+index 1727a951..0acae2ab 100644
+--- a/internal/web/translation/en-US.json
++++ b/internal/web/translation/en-US.json
+@@ -1860,7 +1860,15 @@
+       "subIncyResolveDnsDomainDesc": "DoH server URL, usually ending in /dns-query.",
+       "subIncyResolveDnsIp": "DoH server IP",
+       "subIncyResolveDnsIpDesc": "IP of the DoH server, used for bootstrap.",
+-      "subIncyGroupRouting": "Routing"
++      "subIncyGroupRouting": "Routing",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "Save",
+diff --git a/internal/web/translation/es-ES.json b/internal/web/translation/es-ES.json
+index ed9e15db..e90a5718 100644
+--- a/internal/web/translation/es-ES.json
++++ b/internal/web/translation/es-ES.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "URL del servidor DoH, normalmente acaba en /dns-query.",
+       "subIncyResolveDnsIp": "IP del servidor DoH",
+       "subIncyResolveDnsIpDesc": "IP del servidor DoH para el arranque.",
+-      "subIncyGroupRouting": "Enrutado"
++      "subIncyGroupRouting": "Enrutado",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "Guardar configuración",
+diff --git a/internal/web/translation/fa-IR.json b/internal/web/translation/fa-IR.json
+index 93244fce..7b74fc02 100644
+--- a/internal/web/translation/fa-IR.json
++++ b/internal/web/translation/fa-IR.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "آدرس سرور DoH، معمولاً به /dns-query ختم میشود.",
+       "subIncyResolveDnsIp": "آیپی سرور DoH",
+       "subIncyResolveDnsIpDesc": "آیپی سرور DoH برای بوتاسترپ.",
+-      "subIncyGroupRouting": "مسیریابی"
++      "subIncyGroupRouting": "مسیریابی",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "ذخیره",
+diff --git a/internal/web/translation/id-ID.json b/internal/web/translation/id-ID.json
+index e1a79c6e..b09817f1 100644
+--- a/internal/web/translation/id-ID.json
++++ b/internal/web/translation/id-ID.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "URL server DoH, biasanya berakhiran /dns-query.",
+       "subIncyResolveDnsIp": "IP server DoH",
+       "subIncyResolveDnsIpDesc": "IP server DoH untuk bootstrap.",
+-      "subIncyGroupRouting": "Perutean"
++      "subIncyGroupRouting": "Perutean",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "Simpan",
+diff --git a/internal/web/translation/ja-JP.json b/internal/web/translation/ja-JP.json
+index 1a5d8d5f..10335738 100644
+--- a/internal/web/translation/ja-JP.json
++++ b/internal/web/translation/ja-JP.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "DoH サーバー URL。通常は /dns-query で終わります。",
+       "subIncyResolveDnsIp": "DoH サーバー IP",
+       "subIncyResolveDnsIpDesc": "ブートストラップ用の DoH サーバー IP。",
+-      "subIncyGroupRouting": "ルーティング"
++      "subIncyGroupRouting": "ルーティング",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "importRules": "ルールをインポート",
+diff --git a/internal/web/translation/pt-BR.json b/internal/web/translation/pt-BR.json
+index be1a6356..8fb219b0 100644
+--- a/internal/web/translation/pt-BR.json
++++ b/internal/web/translation/pt-BR.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "URL do servidor DoH, geralmente terminando em /dns-query.",
+       "subIncyResolveDnsIp": "IP do servidor DoH",
+       "subIncyResolveDnsIpDesc": "IP do servidor DoH para bootstrap.",
+-      "subIncyGroupRouting": "Roteamento"
++      "subIncyGroupRouting": "Roteamento",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "importRules": "Importar regras",
+diff --git a/internal/web/translation/ru-RU.json b/internal/web/translation/ru-RU.json
+index 22aa20fb..a0d91638 100644
+--- a/internal/web/translation/ru-RU.json
++++ b/internal/web/translation/ru-RU.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "URL DoH-сервера, обычно заканчивается на /dns-query.",
+       "subIncyResolveDnsIp": "IP DoH-сервера",
+       "subIncyResolveDnsIpDesc": "IP DoH-сервера, нужен для bootstrap.",
+-      "subIncyGroupRouting": "Маршрутизация"
++      "subIncyGroupRouting": "Маршрутизация",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "importRules": "Импорт правил",
+diff --git a/internal/web/translation/tr-TR.json b/internal/web/translation/tr-TR.json
+index c3827748..73a5b12c 100644
+--- a/internal/web/translation/tr-TR.json
++++ b/internal/web/translation/tr-TR.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "DoH sunucu URL'si, genelde /dns-query ile biter.",
+       "subIncyResolveDnsIp": "DoH sunucu IP'si",
+       "subIncyResolveDnsIpDesc": "Bootstrap için DoH sunucu IP'si.",
+-      "subIncyGroupRouting": "Yönlendirme"
++      "subIncyGroupRouting": "Yönlendirme",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "Kaydet",
+diff --git a/internal/web/translation/uk-UA.json b/internal/web/translation/uk-UA.json
+index 756b3b6d..4f349fd7 100644
+--- a/internal/web/translation/uk-UA.json
++++ b/internal/web/translation/uk-UA.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "URL DoH-сервера, зазвичай закінчується на /dns-query.",
+       "subIncyResolveDnsIp": "IP DoH-сервера",
+       "subIncyResolveDnsIpDesc": "IP DoH-сервера для bootstrap.",
+-      "subIncyGroupRouting": "Маршрутизація"
++      "subIncyGroupRouting": "Маршрутизація",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "save": "Зберегти",
+diff --git a/internal/web/translation/vi-VN.json b/internal/web/translation/vi-VN.json
+index b03c668b..f87ee225 100644
+--- a/internal/web/translation/vi-VN.json
++++ b/internal/web/translation/vi-VN.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "URL máy chủ DoH, thường kết thúc bằng /dns-query.",
+       "subIncyResolveDnsIp": "IP máy chủ DoH",
+       "subIncyResolveDnsIpDesc": "IP máy chủ DoH để khởi tạo.",
+-      "subIncyGroupRouting": "Định tuyến"
++      "subIncyGroupRouting": "Định tuyến",
++      "subClashPreset": "One-click routing preset",
++      "subClashPresetDesc": "Pick a ready-made routing profile: enables Clash subscription + routing and fills the rules URL (rules sync daily, clients refresh hourly). Click Save afterwards.",
++      "subClashPresetPlaceholder": "Choose a preset",
++      "subClashPreset_standard": "Aethersailor Standard (service groups + per-region auto select)",
++      "subClashPreset_lite": "Aethersailor Lite (fewer groups)",
++      "subClashPreset_full": "Aethersailor Full (most granular)",
++      "subClashPreset_gfw": "Aethersailor GFW (proxy blocked sites only)",
++      "subClashPresetApplied": "Using a one-click routing preset: rules come from a remote URL synced daily; include a region flag or code in node names (e.g. 🇭🇰 HK A) so region groups fill automatically. Remember to Save."
+     },
+     "xray": {
+       "importRules": "Nhập quy tắc",
+diff --git a/internal/web/translation/zh-CN.json b/internal/web/translation/zh-CN.json
+index 32e54711..361dbc22 100644
+--- a/internal/web/translation/zh-CN.json
++++ b/internal/web/translation/zh-CN.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "DoH 服务器 URL，通常以 /dns-query 结尾。",
+       "subIncyResolveDnsIp": "DoH 服务器 IP",
+       "subIncyResolveDnsIpDesc": "用于引导的 DoH 服务器 IP。",
+-      "subIncyGroupRouting": "路由"
++      "subIncyGroupRouting": "路由",
++      "subClashPreset": "一键分流规则",
++      "subClashPresetDesc": "选一个现成的分流方案，自动开启 Clash 订阅和路由并填好规则地址（规则每天自动更新，客户端每小时刷新），选完点页面上的保存",
++      "subClashPresetPlaceholder": "选择分流方案",
++      "subClashPreset_standard": "Aethersailor 标准版（推荐：按服务分组 + 地区自动测速）",
++      "subClashPreset_lite": "Aethersailor 精简版（分组少）",
++      "subClashPreset_full": "Aethersailor 全分组版（分组最细）",
++      "subClashPreset_gfw": "Aethersailor GFW 版（只代理被墙网站）",
++      "subClashPresetApplied": "已使用一键分流规则：规则由远程地址提供，每天自动同步；节点名请带地区旗帜或代码（如 🇭🇰 HK A），地区组会自动归类。记得点保存。"
+     },
+     "xray": {
+       "importRules": "导入规则",
+diff --git a/internal/web/translation/zh-TW.json b/internal/web/translation/zh-TW.json
+index 13c6152f..094e5a42 100644
+--- a/internal/web/translation/zh-TW.json
++++ b/internal/web/translation/zh-TW.json
+@@ -1742,7 +1742,15 @@
+       "subIncyResolveDnsDomainDesc": "DoH 伺服器 URL，通常以 /dns-query 結尾。",
+       "subIncyResolveDnsIp": "DoH 伺服器 IP",
+       "subIncyResolveDnsIpDesc": "用於引導的 DoH 伺服器 IP。",
+-      "subIncyGroupRouting": "路由"
++      "subIncyGroupRouting": "路由",
++      "subClashPreset": "一鍵分流規則",
++      "subClashPresetDesc": "選一個現成的分流方案，自動開啟 Clash 訂閱和路由並填好規則地址（規則每天自動更新，客戶端每小時刷新），選完點頁面上的儲存",
++      "subClashPresetPlaceholder": "選擇分流方案",
++      "subClashPreset_standard": "Aethersailor 標準版（推薦：按服務分組 + 地區自動測速）",
++      "subClashPreset_lite": "Aethersailor 精簡版（分組少）",
++      "subClashPreset_full": "Aethersailor 全分組版（分組最細）",
++      "subClashPreset_gfw": "Aethersailor GFW 版（只代理被牆網站）",
++      "subClashPresetApplied": "已使用一鍵分流規則：規則由遠端地址提供，每天自動同步；節點名請帶地區旗幟或代碼（如 🇭🇰 HK A），地區組會自動歸類。記得點儲存。"
+     },
+     "xray": {
+       "save": "儲存",
+diff --git a/update.sh b/update.sh
+index e3530891..fc9a618c 100755
+--- a/update.sh
++++ b/update.sh
+@@ -491,7 +491,7 @@ require_repo_files() {
+     shift
+     [[ "${ref}" == "main" ]] && return 0
+     for name in "$@"; do
+-        status=$(${curl_bin} -sIL --retry 3 --connect-timeout 15 -o /dev/null -w '%{http_code}' "https://raw.githubusercontent.com/MHSanaei/3x-ui/${ref}/${name}")
++        status=$(${curl_bin} -sIL --retry 3 --connect-timeout 15 -o /dev/null -w '%{http_code}' "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${ref}/${name}")
+         if [[ "${status}" != "200" ]]; then
+             _fail "ERROR: ${name} is not available for ${ref} (HTTP ${status}). Update to a release that ships it, or to 'dev-latest'. The current installation is untouched."
+         fi
+@@ -518,7 +518,7 @@ update_x-ui() {
+         tag_version="${XUI_UPDATE_TAG}"
+         echo -e "${green}Using update tag: ${tag_version}${plain}"
+     else
+-        tag_version=$(${curl_bin} -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" 2> /dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
++        tag_version=$(${curl_bin} -Ls "https://api.github.com/repos/kevinkuang17-hub/3x-ui/releases/latest" 2> /dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+         if [[ ! -n "$tag_version" ]]; then
+             _fail "ERROR: Failed to fetch x-ui version, it may be due to GitHub API restrictions, please try it later"
+         fi
+@@ -535,7 +535,7 @@ update_x-ui() {
+     local required_files=("x-ui.sh")
+     [[ $release == "alpine" ]] && required_files+=("x-ui.rc")
+     require_repo_files "${script_ref}" "${required_files[@]}"
+-    ${curl_bin} -fLRo ${xui_folder}-linux-$(arch).tar.gz https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz 2> /dev/null
++    ${curl_bin} -fLRo ${xui_folder}-linux-$(arch).tar.gz https://github.com/kevinkuang17-hub/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz 2> /dev/null
+     if [[ $? -ne 0 ]]; then
+         _fail "ERROR: Failed to download x-ui, please be sure that your server can access GitHub"
+     fi
+@@ -548,7 +548,7 @@ update_x-ui() {
+     # predating the sidecar) is tolerated with a warning.
+     archive="${xui_folder}-linux-$(arch).tar.gz"
+     rm -f "${archive}.sha256"
+-    sidecar_code=$(${curl_bin} -sL --retry 3 --retry-delay 3 --connect-timeout 15 --max-time 60 -o "${archive}.sha256" -w '%{http_code}' "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz.sha256" 2> /dev/null)
++    sidecar_code=$(${curl_bin} -sL --retry 3 --retry-delay 3 --connect-timeout 15 --max-time 60 -o "${archive}.sha256" -w '%{http_code}' "https://github.com/kevinkuang17-hub/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz.sha256" 2> /dev/null)
+     if [[ "${sidecar_code}" == "200" ]]; then
+         expected_sha256=$(awk 'NR == 1 {print $1}' "${archive}.sha256")
+         actual_sha256=$(sha256sum "${archive}" | awk '{print $1}')
+@@ -653,7 +653,7 @@ update_x-ui() {
+     echo -e "${green}Downloading and installing x-ui.sh script...${plain}"
+     local xui_script_temp="/usr/bin/x-ui-temp.$$"
+     rm -f "${xui_script_temp}"
+-    ${curl_bin} -fLRo "${xui_script_temp}" "https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.sh" > /dev/null 2>&1
++    ${curl_bin} -fLRo "${xui_script_temp}" "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.sh" > /dev/null 2>&1
+     if [[ $? -ne 0 ]]; then
+         rm -f "${xui_script_temp}"
+         _fail "ERROR: Failed to download x-ui.sh script, please be sure that your server can access GitHub"
+@@ -689,7 +689,7 @@ update_x-ui() {
+         echo -e "${green}Downloading and installing startup unit x-ui.rc...${plain}"
+         xui_rc_temp="/etc/init.d/x-ui.tmp.$$"
+         rm -f "${xui_rc_temp}"
+-        ${curl_bin} -fLRo "${xui_rc_temp}" "https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.rc" > /dev/null 2>&1
++        ${curl_bin} -fLRo "${xui_rc_temp}" "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.rc" > /dev/null 2>&1
+         if [[ $? -ne 0 ]]; then
+             rm -f "${xui_rc_temp}"
+             _fail "ERROR: Failed to download startup unit x-ui.rc, please be sure that your server can access GitHub"
+@@ -748,13 +748,13 @@ update_x-ui() {
+                 echo -e "${yellow}Service files not found in tar.gz, downloading from GitHub...${plain}"
+                 case "${release}" in
+                     ubuntu | debian | armbian)
+-                        service_unit_url="https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.service.debian"
++                        service_unit_url="https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.service.debian"
+                         ;;
+                     arch | manjaro | parch)
+-                        service_unit_url="https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.service.arch"
++                        service_unit_url="https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.service.arch"
+                         ;;
+                     *)
+-                        service_unit_url="https://raw.githubusercontent.com/MHSanaei/3x-ui/${script_ref}/x-ui.service.rhel"
++                        service_unit_url="https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/${script_ref}/x-ui.service.rhel"
+                         ;;
+                 esac
+ 
+diff --git a/x-ui.sh b/x-ui.sh
+index ab41e382..1167366f 100644
+--- a/x-ui.sh
++++ b/x-ui.sh
+@@ -129,7 +129,7 @@ before_show_menu() {
+ }
+ 
+ install() {
+-    bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/install.sh)
++    bash <(curl -Ls https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/main/install.sh)
+     if [[ $? == 0 ]]; then
+         if [[ $# == 0 ]]; then
+             start
+@@ -148,7 +148,7 @@ update() {
+         fi
+         return 0
+     fi
+-    bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/update.sh)
++    bash <(curl -Ls https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/main/update.sh)
+     if [[ $? == 0 ]]; then
+         LOGI "Update is complete, Panel has automatically restarted "
+         before_show_menu
+@@ -166,7 +166,7 @@ update_dev() {
+     fi
+     # XUI_UPDATE_TAG tells update.sh to install the dev-latest pre-release
+     # instead of the latest stable tag.
+-    XUI_UPDATE_TAG="dev-latest" bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/update.sh)
++    XUI_UPDATE_TAG="dev-latest" bash <(curl -Ls https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/main/update.sh)
+     if [[ $? == 0 ]]; then
+         LOGI "Dev update is complete, Panel has automatically restarted "
+         before_show_menu
+@@ -213,11 +213,11 @@ replace_xui_script() {
+ installed_script_url() {
+     local ver
+     ver=$("${xui_folder}/x-ui" -v 2> /dev/null | tr -d '[:space:]')
+-    if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && curl -fsIL -o /dev/null "https://raw.githubusercontent.com/MHSanaei/3x-ui/v${ver}/x-ui.sh"; then
+-        echo "https://raw.githubusercontent.com/MHSanaei/3x-ui/v${ver}/x-ui.sh"
++    if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && curl -fsIL -o /dev/null "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/v${ver}/x-ui.sh"; then
++        echo "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/v${ver}/x-ui.sh"
+     else
+         echo -e "${yellow}No x-ui.sh published for the installed version (${ver:-unknown}), using main${plain}" >&2
+-        echo "https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh"
++        echo "https://raw.githubusercontent.com/kevinkuang17-hub/3x-ui/main/x-ui.sh"
+     fi
+ }
+ 
+-- 
+2.43.0
+
