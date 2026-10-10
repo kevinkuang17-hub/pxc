@@ -446,30 +446,97 @@ def import_all():
 
 @bp.route("/servers/join", methods=["GET", "POST"])
 def server_join():
-    """生成“一键接入新服务器”的单行命令（一次性令牌，24 小时有效）。"""
-    cmd = None
-    console = get_setting("console_node_url", "")
+    """生成“一键接入新服务器”的单行命令（一次性令牌，24 小时有效）。
+    控制台地址、Tailscale 授权密钥、域名解析和证书都自动处理，只需要填地区。"""
+    from .. import cloudflare as cfmod
+    from .. import tailscale as ts
+    s = Session()
+    cmd, info = None, []
+    if request.method == "POST" and request.form.get("act") == "ts_api":
+        key = request.form.get("ts_api_key", "").strip()
+        if not key:
+            set_setting("ts_api_key", "")
+            flash("已清除 Tailscale API 密钥", "ok")
+        else:
+            try:
+                n = ts.check_api_key(key)
+                set_setting("ts_api_key", crypto.enc(key))
+                audit("tailscale.api_key", "set", operator=g.admin.username)
+                flash(f"已保存，Tailscale 里现在有 {n} 台设备。以后接入新服务器会自动生成授权密钥", "ok")
+            except ts.TsError as e:
+                flash(str(e), "error")
+        return redirect(url_for("admin.server_join"))
+    ts_ip = ts.local_ip()
+    ts_url = ts.console_url()                        # 控制台的 Tailscale 内网地址（没加入就是空）
+    host = request.host.split(":")[0]
+    guess_public = "" if (host in ("localhost", "127.0.0.1") or host.startswith("100.")) else request.host_url.rstrip("/")
+    public = get_setting("console_public_url", "") or guess_public
+    zones = sorted({z["name"] for a in s.query(cfmod.CfAccount).all() for z in json.loads(a.zones or "[]")})
     if request.method == "POST":
-        console = request.form.get("console_url", "").strip().rstrip("/")
-        set_setting("console_node_url", console)
-        payload = {k: request.form.get(k, "").strip() for k in ("name", "region", "domain", "ts_key", "cf_token")}
+        f = request.form
+        if f.get("console_public_url", "").strip().rstrip("/") != (get_setting("console_public_url", "") or ""):
+            set_setting("console_public_url", f.get("console_public_url", "").strip().rstrip("/"))
+            public = get_setting("console_public_url", "") or guess_public
+        payload = {k: f.get(k, "").strip() for k in ("name", "region", "domain")}
         payload["region"] = payload["region"].upper()
         if not payload["name"] and payload["region"]:
             from ..rules import next_letter_name
-            payload["name"] = next_letter_name(payload["region"], [x.name for x in Session().query(Server)])
+            payload["name"] = next_letter_name(payload["region"], [x.name for x in s.query(Server)] + _pending_names(s))
+        if payload["domain"] == "" and f.get("auto_domain") and zones and payload["name"]:
+            payload["domain"] = re.sub(r"[^a-z0-9]", "", payload["name"].lower()) + "." + (f.get("zone") or zones[0])
+        ts_key = f.get("ts_key", "").strip()
         if not payload["name"]:
             flash("请填写地区代码（如 HK），名称会按 HK A、HK B … 自动排下去", "error")
-        elif not console:
-            flash("请填写新服务器能访问到的控制台地址（建议 Tailscale 内网地址）", "error")
         else:
-            tok = secrets.token_urlsafe(24)
-            s = Session()
-            s.add(OneTimeToken(token_hash=auth.sha(tok), purpose="join", payload=json.dumps(payload),
-                               expires_at=now() + dt.timedelta(hours=24)))
-            s.commit()
-            cmd = f'bash <(curl -fsSL "{console}/j/{tok}")'
-            audit("join.token", payload["name"], operator=g.admin.username)
-    return render_template("join.html", cmd=cmd, console=console)
+            if ts_url and not ts_key and ts.api_key():
+                try:
+                    ts_key = ts.create_auth_key(f"pxc {payload['name']}")
+                    info.append("已自动生成 Tailscale 授权密钥（一次性，24 小时有效），新服务器先加入你的 Tailscale，再经内网连控制台")
+                except ts.TsError as e:
+                    info.append(f"Tailscale 授权密钥没生成：{e}")
+            if not (ts_url and ts_key) and not public:
+                flash("新服务器连不到控制台：控制台只在 Tailscale 内网，但还没设置 Tailscale API 密钥。"
+                      "请在右边填一次 API 密钥（或在“高级”里填控制台的公网地址）", "error")
+            else:
+                if payload["domain"]:
+                    payload["cf_auto"] = bool(cfmod.zone_for(payload["domain"]))
+                    info.append(f"节点域名 {payload['domain']}：" + (
+                        "控制台会用已添加的 Cloudflare 账号自动解析（灰云），证书自动申请" if payload["cf_auto"] else
+                        "不在已添加的 Cloudflare 账号下，请先手动解析到新服务器 IP（灰云），脚本会等解析生效后自动申请证书"))
+                tok = secrets.token_urlsafe(24)
+                if ts_url and ts_key:
+                    payload["console"] = ts_url
+                    repo = os.environ.get("PXC_REPO", "") or "kevinkuang17-hub/pxc"
+                    ref = __version__ if re.fullmatch(r"v\d+\.\d+\.\d+", __version__ or "") else "main"
+                    # 脚本按控制台当前版本的标签取，控制台和 GitHub 上的版本不会对不上
+                    cmd = (f"bash <(curl -fsSL https://raw.githubusercontent.com/{repo}/{ref}/scripts/join.sh) "
+                           f"'{ts_url}' '{tok}' '{ts_key}'")
+                else:
+                    payload["console"] = public
+                    if ts_url:
+                        info.append("没有 Tailscale 授权密钥：新服务器经控制台公网地址接入，面板仍然只对控制台开放")
+                    cmd = f'bash <(curl -fsSL "{public}/j/{tok}")'
+                s.add(OneTimeToken(token_hash=auth.sha(tok), purpose="join", payload=json.dumps(payload),
+                                   expires_at=now() + dt.timedelta(hours=24)))
+                s.commit()
+                audit("join.token", payload["name"], operator=g.admin.username)
+    from ..rules import next_letter_name
+    names = [x.name for x in s.query(Server)] + _pending_names(s)
+    return render_template("join.html", cmd=cmd, info=info, public=public, ts_ip=ts_ip,
+                           has_ts_key=bool(ts.api_key()), zones=zones,
+                           next_names={r: next_letter_name(r, names) for r in ("HK", "JP", "SG", "US", "TW", "KR")})
+
+
+def _pending_names(s):
+    """还没接入完成的一键接入令牌里预定的名字：连着生成两条命令时不会撞名。"""
+    out = []
+    for row in s.query(OneTimeToken).filter(OneTimeToken.purpose == "join", OneTimeToken.used_at.is_(None),
+                                            OneTimeToken.expires_at > now()):
+        try:
+            out.append(json.loads(row.payload or "{}").get("name", ""))
+        except ValueError:
+            pass
+    return [x for x in out if x]
 
 
 # ======================= 一键建线路 / 加落地 =======================

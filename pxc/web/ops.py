@@ -181,16 +181,102 @@ def subs_provider():
 @bp.route("/rules", methods=["GET", "POST"])
 def rules_home():
     s = Session()
-    if request.method == "POST" and request.form.get("act") == "seed":
+    from .. import ruletpl
+    act = request.form.get("act") if request.method == "POST" else None
+    if act == "seed":
         if rules.seed_defaults():
             flash("已建好常用规则集和 3 个方案；远程规则集会在几分钟内自动拉取", "ok")
+        return redirect(url_for("admin.rules_home"))
+    if act in ("tpl_preset", "tpl_url"):
+        if act == "tpl_preset":
+            name, url, _ = ruletpl.PRESETS[int(request.form.get("i", 0))]
+        else:
+            url = request.form.get("url", "").strip()
+            name = request.form.get("name", "").strip() or url.rstrip("/").split("/")[-1]
+        try:
+            if not url.startswith(("http://", "https://")):
+                raise ruletpl.TplError("请填写模板的网址（http 或 https 开头）")
+            p = ruletpl.create(name, url)
+            if p.template_error:
+                flash(f"已添加“{name}”，但这次没下载成功：{p.template_error}。会每小时自动重试", "warn")
+            else:
+                flash(f"已导入“{name}”。到“套餐”或用户编辑页选它；也可以点“设为默认”让所有人都用", "ok")
+                if request.form.get("make_default"):
+                    set_setting("default_rule_profile_id", str(p.id))
+                changed(f"导入规则模板 {name}")
+        except ruletpl.TplError as e:
+            flash(str(e), "error")
+        return redirect(url_for("admin.rules_home"))
+    if act == "default":
+        pid = request.form.get("pid", "")
+        set_setting("default_rule_profile_id", pid if pid.isdigit() else "")
+        audit("profile.default", pid or "内置", operator=g.admin.username)
+        changed("默认分流方案变化")
+        flash("已设为默认方案：没有单独选方案的套餐和用户都会用它（客户端刷新订阅后生效）", "ok")
         return redirect(url_for("admin.rules_home"))
     used = {}
     for p in s.query(RuleProfile):
         for it in json.loads(p.items or "[]"):
             used.setdefault(it.get("ruleset_id"), []).append(p.name)
-    return render_template("rules.html", sets=s.query(Ruleset).order_by(Ruleset.id).all(),
-                           profiles=s.query(RuleProfile).order_by(RuleProfile.id).all(), used=used)
+    profiles = s.query(RuleProfile).order_by(RuleProfile.id).all()
+    have_urls = {p.template_url for p in profiles if p.kind == "template"}
+    stats = {}
+    for p in profiles:
+        if p.kind == "template" and p.template_content:
+            try:
+                t = ruletpl.parse(p.template_content)
+                stats[p.id] = (len(t["groups"]), len(t["rules"]))
+            except ruletpl.TplError:
+                pass
+    return render_template("rules.html", sets=s.query(Ruleset).order_by(Ruleset.id).all(), profiles=profiles,
+                           used=used, presets=ruletpl.PRESETS, have_urls=have_urls, stats=stats,
+                           default_id=get_setting("default_rule_profile_id", ""))
+
+
+@bp.route("/rules/template/<int:pid>", methods=["GET", "POST"])
+def template_view(pid):
+    from .. import ruletpl
+    from ..models import Plan
+    s = Session()
+    p = s.get(RuleProfile, pid)
+    if p is None or p.kind != "template":
+        abort(404)
+    if request.method == "POST":
+        act = request.form.get("act")
+        if act == "refresh":
+            ok = ruletpl.refresh(p)
+            flash("已更新到最新" if ok else f"更新失败：{p.template_error}", "ok" if ok else "error")
+            if ok:
+                changed(f"规则模板 {p.name} 更新")
+        elif act == "save":
+            p.name = request.form.get("name", "").strip() or p.name
+            url = request.form.get("url", "").strip()
+            if url and url != p.template_url:
+                p.template_url = url
+                ruletpl.refresh(p)
+            s.commit()
+            flash("已保存", "ok")
+        elif act == "delete":
+            if s.query(Plan).filter_by(rule_profile_id=p.id).count() or \
+                    s.query(Client).filter_by(rule_profile_id=p.id).count():
+                flash("还有套餐或用户在用这个方案", "error")
+            else:
+                if get_setting("default_rule_profile_id") == str(p.id):
+                    set_setting("default_rule_profile_id", "")
+                s.delete(p)
+                s.commit()
+                audit("rule_template.delete", p.name, operator=g.admin.username)
+                changed("删除规则模板")
+                flash("已删除", "ok")
+                return redirect(url_for("admin.rules_home"))
+        return redirect(url_for("admin.template_view", pid=pid))
+    tpl = None
+    if p.template_content:
+        try:
+            tpl = ruletpl.parse(p.template_content)
+        except ruletpl.TplError as e:
+            flash(str(e), "error")
+    return render_template("template.html", p=p, tpl=tpl, is_default=get_setting("default_rule_profile_id") == str(p.id))
 
 
 @bp.route("/rules/set/new", methods=["GET", "POST"])
@@ -254,6 +340,8 @@ def profile_edit(pid=None):
     p = s.get(RuleProfile, pid) if pid else RuleProfile(items="[]", final_policy=rules.PROXY)
     if pid and p is None:
         abort(404)
+    if p is not None and p.kind == "template":
+        return redirect(url_for("admin.template_view", pid=p.id))
     sets = s.query(Ruleset).order_by(Ruleset.name).all()
     from ..models import LineGroup
     groups = [x.name for x in s.query(LineGroup).order_by(LineGroup.sort_order)]
@@ -366,7 +454,9 @@ def isp_probes():
                 flash("名称已存在", "error")
             else:
                 p, tok = isp_probe.new_probe(name, request.form.get("isp", "其它"), request.form.get("region", "").strip())
-                base = get_setting("console_probe_url", "") or get_setting("console_node_url", "") or request.host_url.rstrip("/")
+                from .. import tailscale as ts
+                base = get_setting("console_probe_url", "") or ts.console_url() or get_setting("console_node_url", "") \
+                    or request.host_url.rstrip("/")
                 cmd = f'sh -c "$(curl -fsSL {base}/p/{tok})"'
         elif act == "delete":
             p = s.get(IspProbe, int(request.form["id"]))
@@ -383,7 +473,8 @@ def isp_probes():
     probes = s.query(IspProbe).order_by(IspProbe.isp, IspProbe.name).all()
     lines = s.query(Line).filter_by(enabled=True).order_by(Line.name).all()
     return render_template("probes.html", probes=probes, lines=lines, m=isp_probe.matrix(), cmd=cmd,
-                           console=get_setting("console_probe_url", "") or get_setting("console_node_url", ""))
+                           console=get_setting("console_probe_url", "") or __import__("pxc.tailscale", fromlist=["x"]).console_url()
+                           or get_setting("console_node_url", ""))
 
 
 # ======================= 配置历史 =======================

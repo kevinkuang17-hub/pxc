@@ -222,6 +222,10 @@ def _profile_of(c):
         plan = s.get(Plan, c.plan_id)
         if plan and plan.rule_profile_id:
             return s.get(RuleProfile, plan.rule_profile_id)
+    from .models import get_setting
+    d = get_setting("default_rule_profile_id", "")          # 全局默认方案（首次运行设为 Aethersailor 标准版）
+    if d.isdigit():
+        return s.get(RuleProfile, int(d))
     return None
 
 
@@ -245,6 +249,9 @@ def client_rule_spec(c):
     prof = _profile_of(c)
     toggles = effective_toggles(c)
     split = lambda x: [d.strip().lower().lstrip("+.*") for d in re.split(r"[\s,]+", x or "") if d.strip()]
+    if prof is not None and prof.kind == "template":
+        return {"template": str(prof.id), "profile": None, "toggles": {k: d for k, _, _, _, d in TOGGLES},
+                "direct": split(c.custom_direct), "proxy": split(c.custom_proxy)}
     return {
         "profile": {"name": prof.name, "items": json.loads(prof.items or "[]"), "final": prof.final_policy or PROXY}
         if prof else None,
@@ -412,6 +419,8 @@ def explain(client, domain):
             code = p[len(REGION_PREFIX):]
             return f"{code} 地区组（{' → '.join(region_members(code, groups, nodes)) or '无'}）"
         return {"DIRECT": "直连", "REJECT": "拦截"}.get(p, p or "🚀 节点选择")
+    if spec.get("template"):
+        return _explain_template(spec, domain, groups)
     for kind, val, pol in rule_list(spec, groups, meta, regions):
         if kind == "MATCH":
             steps.append(("兜底规则", "命中", label(pol)))
@@ -443,6 +452,39 @@ def explain(client, domain):
     if unsure:
         note = f"前面有 {len(unsure)} 条 geosite/geoip 分类规则无法离线判断：如果这个域名属于其中某个分类，会更早命中那一条。"
     return steps, verdict, note, groups
+
+
+def _explain_template(spec, domain, groups):
+    from .ruletpl import TplError, parse
+    prof = Session().get(RuleProfile, int(spec["template"]))
+    try:
+        tpl = parse(prof.template_content) if prof and prof.template_content else None
+    except TplError:
+        tpl = None
+    if not tpl:
+        return [], None, "这个规则模板还没下载成功", groups
+    steps, unsure = [], 0
+    for d in spec.get("direct", []):
+        if _match_entry(domain, "DOMAIN-SUFFIX", d):
+            return [(f"自定义直连 {d}", "命中", "直连")], "直连", "", groups
+    for d in spec.get("proxy", []):
+        if _match_entry(domain, "DOMAIN-SUFFIX", d):
+            return [(f"自定义代理 {d}", "命中", tpl["groups"][0]["name"])], tpl["groups"][0]["name"], "", groups
+    for r in tpl["rules"]:
+        if r["kind"] == "MATCH":
+            steps.append(("兜底规则", "命中", r["group"]))
+            return steps, r["group"], (f"前面有 {unsure} 条分类 / 远程列表规则无法离线判断，属于其中某个分类的话会更早命中。"
+                                       if unsure else ""), groups
+        if r["kind"] in ("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"):
+            hit = _match_entry(domain, r["kind"], r["value"])
+            steps.append((f"{r['kind']} {r['value']}", "命中" if hit else "未命中", r["group"]))
+            if hit:
+                return steps, r["group"], "", groups
+        else:
+            unsure += 1
+            what = f"{r['kind'].lower()}:{r['value']}" if r["kind"] != "RULESET" else "远程列表 " + r["url"].split("/")[-1]
+            steps.append((what, "需看分类内容", r["group"]))
+    return steps, None, "", groups
 
 
 SEED = [

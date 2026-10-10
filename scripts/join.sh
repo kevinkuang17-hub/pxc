@@ -10,6 +10,8 @@ die(){ red "✗ $*"; exit 1; }
 step(){ printf '\033[36m▶ %s\033[0m\n' "$*"; }
 
 [ "$(id -u)" = 0 ] || die "请用 root 执行（先输入 sudo -i）"
+# 控制台只在 Tailscale 内网时：命令从 GitHub 取脚本，参数是 控制台内网地址 令牌 Tailscale授权密钥，先加入 Tailscale 再连控制台
+if [ $# -ge 2 ]; then CONSOLE_URL="$1"; JOIN_TOKEN="$2"; TS_KEY="${3:-}"; fi
 : "${JOIN_TOKEN:?缺少令牌，请从控制台复制完整命令}"
 : "${CONSOLE_URL:?缺少控制台地址}"
 XUI_VERSION="${XUI_VERSION:-}"          # 留空 = 最新版；建议在测试服务器验证后锁定版本
@@ -26,9 +28,14 @@ TS_IP=""
 if [ -n "${TS_KEY:-}" ]; then
   step "加入 Tailscale"
   command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh >/dev/null
-  tailscale up --authkey="$TS_KEY" --hostname="$(echo "${NODE_NAME:-node}" | tr ' A-Z' '-a-z')" --accept-dns=false || die "Tailscale 登录失败"
+  tailscale up --authkey="$TS_KEY" --hostname="$(echo "${NODE_NAME:-pxc-node}" | tr ' A-Z' '-a-z')" --accept-dns=false || die "Tailscale 登录失败"
   TS_IP=$(tailscale ip -4 | head -1)
   green "  Tailscale IP $TS_IP"
+fi
+if [ -z "${NODE_NAME:-}" ]; then        # 参数方式启动：从控制台取这台的名称、域名等
+  ENVS=$(curl -fsS -m 20 "$CONSOLE_URL/j/$JOIN_TOKEN/env") || die "连不上控制台 $CONSOLE_URL（Tailscale 已连上吗？令牌过期了吗？）"
+  eval "$ENVS"
+  [ -n "$TS_IP" ] && tailscale set --hostname="$(echo "$NODE_NAME" | tr ' A-Z' '-a-z')" >/dev/null 2>&1 || true
 fi
 
 # ---------- 已装过 3X-UI 的服务器：一律不动（不重装、不改端口账号、不碰它的数据库） ----------
@@ -124,19 +131,44 @@ EOF
 systemctl daemon-reload && systemctl enable -q --now pxc-panel-fw
 green "  面板端口 $PANEL_PORT 只允许控制台（${CONSOLE_IP:-?}）和 Tailscale 内网访问"
 
-# ---------- 证书（可选：Cloudflare DNS 验证，不需要开 80 端口） ----------
-if [ -n "${CF_TOKEN:-}" ] && [ -n "${NODE_DOMAIN:-}" ]; then
+# ---------- 节点域名解析 + 证书（全自动） ----------
+issue_ok=0
+if [ -n "${NODE_DOMAIN:-}" ]; then
+  if [ -n "${CF_AUTO:-}" ]; then
+    step "解析 $NODE_DOMAIN → $PUBLIC_IP"
+    R=$(curl -sS -m 30 -X POST --data-urlencode "ip=$PUBLIC_IP" "$CONSOLE_URL/j/$JOIN_TOKEN/dns" 2>/dev/null || echo "ERR 控制台连不上")
+    case "$R" in OK*) green "  ${R#OK }";; *) yellow "  自动解析没成功：${R#ERR }";; esac
+  fi
   step "申请证书 $NODE_DOMAIN"
   [ -d ~/.acme.sh ] || curl -fsSL https://get.acme.sh | sh -s email="admin@$NODE_DOMAIN" >/dev/null
-  if CF_Token="$CF_TOKEN" ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$NODE_DOMAIN" --server letsencrypt --keylength ec-256 >/dev/null 2>&1 \
-     || ~/.acme.sh/acme.sh --list | grep -q "$NODE_DOMAIN"; then
+  if [ -n "${CF_TOKEN:-}" ]; then
+    CF_Token="$CF_TOKEN" ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$NODE_DOMAIN" --server letsencrypt --keylength ec-256 >/dev/null 2>&1 && issue_ok=1
+  else
+    # 用 80 端口验证（HTTP-01）：先等域名解析到本机（最多 3 分钟）
+    ok_dns=0
+    for i in $(seq 1 36); do
+      got=$(curl -fsS -m 5 -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$NODE_DOMAIN&type=A" 2>/dev/null | grep -oE '"data":"[0-9.]+"' | head -1 | cut -d'"' -f4 || true)
+      [ -z "$got" ] && got=$(getent ahostsv4 "$NODE_DOMAIN" 2>/dev/null | awk 'NR==1{print $1}' || true)
+      if [ "$got" = "$PUBLIC_IP" ]; then ok_dns=1; break; fi
+      [ "$i" = 1 ] && echo "  等待 $NODE_DOMAIN 解析到 $PUBLIC_IP …（现在是 ${got:-无}）"
+      sleep 5
+    done
+    if [ "$ok_dns" = 1 ]; then
+      iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+      ~/.acme.sh/acme.sh --issue --standalone -d "$NODE_DOMAIN" --server letsencrypt --keylength ec-256 >/dev/null 2>&1 && issue_ok=1
+    else
+      yellow "  $NODE_DOMAIN 没有解析到 $PUBLIC_IP，跳过证书（解析好以后在控制台“一键建线路”前重新接入，或手动执行 acme.sh）"
+    fi
+  fi
+  ~/.acme.sh/acme.sh --list 2>/dev/null | grep -q "$NODE_DOMAIN" && issue_ok=1
+  if [ "$issue_ok" = 1 ]; then
     mkdir -p "/root/cert/$NODE_DOMAIN"
     ~/.acme.sh/acme.sh --install-cert -d "$NODE_DOMAIN" --ecc \
       --fullchain-file "/root/cert/$NODE_DOMAIN/fullchain.pem" --key-file "/root/cert/$NODE_DOMAIN/privkey.pem" \
       --reloadcmd "systemctl restart x-ui" >/dev/null
     green "  证书在 /root/cert/$NODE_DOMAIN/（自动续期）"
   else
-    yellow "  证书申请失败（检查域名是否在这个 Cloudflare 令牌下），可以稍后在服务器上重试"
+    yellow "  证书申请失败（80 端口被占用或被防火墙挡住？），不影响接入；Reality 线路不需要证书"
   fi
 fi
 

@@ -67,6 +67,7 @@ def build_snapshot():
         "nodes": nodes,
         "clients": clients,
         "rulesets": rulesets_meta(),
+        "templates": __import__("pxc.ruletpl", fromlist=["x"]).snapshot_meta(),
     }
 
 
@@ -364,6 +365,19 @@ def render_clash(snap, c, nodes, nodes_only=False, base_url="", stash=False, con
             grp.update(url=TEST_URL, interval=300, tolerance=50)
         groups.append(grp)
     gnames = [g["name"] for g in groups]
+    spec = c.get("rules") or {}
+    tpl = (snap.get("templates") or {}).get(spec.get("template") or "")
+    if tpl and not stash and c.get("active", True) and names:
+        # 远程规则模板（如 Aethersailor）：策略组和规则都按模板生成，控制台的线路组插到第一个选择组里
+        from .ruletpl import clash_parts
+        extra = [(g["name"], g["type"], g["proxies"]) for g in groups]
+        pg, providers, rules, main_name = clash_parts(tpl, names, extra, spec.get("direct", []), spec.get("proxy", []))
+        cfg = _clash_base(proxies, main_name)
+        cfg["proxy-groups"] = pg
+        if providers:
+            cfg["rule-providers"] = providers
+        cfg["rules"] = rules
+        return yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
     main = {"name": MAIN, "type": "select", "proxies": [AUTO] + gnames + names + ["DIRECT"]}
     auto = {"name": AUTO, "type": "url-test", "url": TEST_URL, "interval": 300, "tolerance": 50, "proxies": names}
     rules, providers = [], {}
@@ -398,29 +412,41 @@ def render_clash(snap, c, nodes, nodes_only=False, base_url="", stash=False, con
                 rules.append(f"RULE-SET,{tag},{p}")
         else:
             rules.append(f"{kind},{val},{p}")
-    cfg = {
-        "mixed-port": 7890, "allow-lan": False, "mode": "rule", "log-level": "warning", "ipv6": False,
-        "unified-delay": True, "tcp-concurrent": True, "find-process-mode": "strict",
-        "global-client-fingerprint": "chrome",
-        "dns": {"enable": True, "ipv6": False, "enhanced-mode": "fake-ip", "fake-ip-range": "198.18.0.1/16",
-                "fake-ip-filter": ["*.lan", "+.local", "geosite:private", "geosite:cn"],
-                "default-nameserver": ["223.5.5.5", "119.29.29.29"],
-                "nameserver": ["https://223.5.5.5/dns-query", "https://doh.pub/dns-query"],
-                "proxy-server-nameserver": ["https://223.5.5.5/dns-query"],
-                "nameserver-policy": {"geosite:geolocation-!cn": ["https://1.1.1.1/dns-query#" + MAIN,
-                                                                   "https://8.8.8.8/dns-query#" + MAIN]}},
-        "proxies": proxies,
-        "proxy-groups": [main, auto] + groups,
-    }
+    cfg = _clash_base(proxies, MAIN)
+    cfg["proxy-groups"] = [main, auto] + groups
     if stash:      # Stash 不认 mihomo 专有的 geosite DNS 写法
         cfg["dns"] = {"default-nameserver": ["223.5.5.5", "119.29.29.29"],
                       "nameserver": ["https://223.5.5.5/dns-query", "https://doh.pub/dns-query"]}
-        for k in ("unified-delay", "tcp-concurrent", "find-process-mode", "global-client-fingerprint"):
+        for k in ("unified-delay", "tcp-concurrent", "find-process-mode", "global-client-fingerprint",
+                  "geo-auto-update", "geo-update-interval", "geox-url"):
             cfg.pop(k, None)
     if providers:
         cfg["rule-providers"] = providers
     cfg["rules"] = rules
     return yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
+
+
+GEOX = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/"
+
+
+def _clash_base(proxies, main):
+    return {
+        "mixed-port": 7890, "allow-lan": False, "mode": "rule", "log-level": "warning", "ipv6": False,
+        "unified-delay": True, "tcp-concurrent": True, "find-process-mode": "strict",
+        "global-client-fingerprint": "chrome",
+        # GEOSITE / GEOIP 数据从国内能访问的镜像下载（默认的 GitHub 在国内经常连不上）
+        "geo-auto-update": True, "geo-update-interval": 24,
+        "geox-url": {"geoip": GEOX + "geoip.dat", "geosite": GEOX + "geosite.dat", "mmdb": GEOX + "country.mmdb",
+                     "asn": GEOX + "GeoLite2-ASN.mmdb"},
+        "dns": {"enable": True, "ipv6": False, "enhanced-mode": "fake-ip", "fake-ip-range": "198.18.0.1/16",
+                "fake-ip-filter": ["*.lan", "+.local", "geosite:private", "geosite:cn"],
+                "default-nameserver": ["223.5.5.5", "119.29.29.29"],
+                "nameserver": ["https://223.5.5.5/dns-query", "https://doh.pub/dns-query"],
+                "proxy-server-nameserver": ["https://223.5.5.5/dns-query"],
+                "nameserver-policy": {"geosite:geolocation-!cn": ["https://1.1.1.1/dns-query#" + main,
+                                                                   "https://8.8.8.8/dns-query#" + main]}},
+        "proxies": proxies,
+    }
 
 
 # ---------- sing-box ----------
@@ -458,6 +484,20 @@ def singbox_outbound(n, c):
 SB_GEOSITES = {"cn", "category-ads-all", "openai", "anthropic", "netflix", "youtube", "disney", "microsoft"}
 
 
+def _singbox_base(main):
+    return {
+        "log": {"level": "warn"},
+        "dns": {"servers": [{"tag": "remote", "address": "https://1.1.1.1/dns-query", "detour": main},
+                            {"tag": "local", "address": "https://223.5.5.5/dns-query", "detour": "direct"}],
+                "rules": [{"rule_set": ["geosite-cn"], "server": "local"}], "final": "remote",
+                "strategy": "ipv4_only"},
+        "inbounds": [{"type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"], "auto_route": True,
+                      "strict_route": True},
+                     {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 2080}],
+        "experimental": {"cache_file": {"enabled": True}},
+    }
+
+
 def render_singbox(snap, c, nodes, base_url="", conservative=False):
     outs = [singbox_outbound(n, c) for n in nodes]
     names = [o["tag"] for o in outs]
@@ -470,6 +510,28 @@ def render_singbox(snap, c, nodes, base_url="", conservative=False):
             groups.append({"type": "urltest", "tag": g["name"], "outbounds": members, "url": TEST_URL,
                            "interval": "5m", "tolerance": 50})
     gnames = [g["tag"] for g in groups]
+    spec = c.get("rules") or {}
+    tid = spec.get("template") or ""
+    tpl = (snap.get("templates") or {}).get(tid)
+    if tpl and c.get("active", True) and names:
+        from .ruletpl import singbox_parts
+        extra = [(g["tag"], "select" if g["type"] == "selector" else "url-test", g["outbounds"]) for g in groups]
+        gouts, rule_sets, rules, final, main_name = singbox_parts(tpl, tid, names, extra, spec.get("direct", []),
+                                                                 spec.get("proxy", []), base_url)
+        rule_sets.append({"tag": "geosite-cn", "type": "remote", "format": "binary",
+                          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
+                          "download_detour": main_name})
+        seen, uniq = set(), []
+        for r in rule_sets:
+            if r["tag"] not in seen:
+                seen.add(r["tag"])
+                uniq.append(r)
+        cfg = _singbox_base(main_name)
+        cfg["outbounds"] = gouts + outs + [{"type": "direct", "tag": "direct"}]
+        cfg["route"] = {"auto_detect_interface": True, "final": final,
+                        "rules": [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}] + rules,
+                        "rule_set": uniq}
+        return json.dumps(cfg, ensure_ascii=False, indent=2)
     meta = snap.get("rulesets", {})
     sets = {}
 

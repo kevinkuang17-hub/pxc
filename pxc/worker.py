@@ -70,6 +70,8 @@ def _hourly(cloudflare, monitor, rules):
         _safe(monitor.check_reality_targets)
         _safe(cloudflare.check_all)
         _safe(rules.refresh_due)
+        from . import ruletpl
+        _safe(ruletpl.refresh_due)
         _safe(insights.run_anomalies)
         _safe(insights.check_renewals)
         _safe(insights.maybe_send_report)
@@ -161,6 +163,8 @@ def main():
     init_engine()
     from .rules import seed_defaults
     _safe(seed_defaults)                         # 首次运行建好常用规则集和方案（不覆盖已有的）
+    from .ruletpl import seed_presets
+    _safe(seed_presets)                          # 首次运行导入 Aethersailor 标准版并设为默认方案
     from .state import probe_uuid
     _safe(probe_uuid)                            # 先生成探测账号：免得并发推送线程各自生成、写设置时主键冲突
     state = {"reconcile": time.time() - 240,     # 启动 1 分钟后做第一次比对

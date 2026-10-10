@@ -323,6 +323,11 @@ class RuleProfile(Base):
     items = Column(Text, default="[]")                       # 有序 [{"ruleset_id":1,"policy":"代理"}]
     final_policy = Column(String(64), default="代理")
     version = Column(Integer, default=1)
+    kind = Column(String(10), default="standard")            # standard 自己配的 | template 远程模板（subconverter .ini）
+    template_url = Column(Text, default="")
+    template_content = Column(Text, default="")
+    template_fetched_at = Column(DateTime)
+    template_error = Column(Text, default="")
 
 
 # ---------------- Cloudflare（F16） ----------------

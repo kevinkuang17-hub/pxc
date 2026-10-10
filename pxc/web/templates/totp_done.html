@@ -1,7 +1,24 @@
 {% extends "base.html" %}{% block h1 %}二次认证已绑定{% endblock %}{% block body %}
+<div class="cols">
 <div class="card">
-  <p><b>请把下面 10 个备用码抄下来或存进密码管理器。</b>手机丢失时用来登录，每个只能用一次。这一页离开后不会再显示。</p>
-  <div class="codes" id="codes">{% for c in codes %}<code>{{ c }}</code>{% endfor %}</div>
-  <p style="margin-top:14px"><button class="btn" onclick="copyText('codes',this)">复制</button>
-  <a class="btn p" href="{{ url_for('admin.dash') }}">我已保存，进入后台</a></p>
-</div>{% endblock %}
+  <h2>你的 10 个备用码</h2>
+  <p>手机丢了、验证器 App 打不开时，用备用码代替 6 位动态码登录，<b>每个只能用一次</b>。离开这一页后不会再显示。</p>
+  <div class="codes" id="codes" data-copy="{{ site_name }} 后台备用码（{{ admin_user.username }}，每个只能用一次）&#10;{{ codes|join('\n') }}">{% for c in codes %}<code>{{ c }}</code>{% endfor %}</div>
+  <p style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn" type="button" onclick="copyText('codes',this)">复制全部</button>
+    <button class="btn" type="button" onclick="dlCodes()">下载为文本文件</button>
+    <a class="btn p" href="{{ url_for('admin.dash') }}" onclick="return confirm('确认已经保存好备用码？离开后不会再显示。')">我已保存，进入后台</a></p>
+  <details style="margin-top:6px"><summary class="muted small">复制不了？点这里手动全选</summary>
+    <textarea readonly rows="11" style="margin-top:8px;font-family:ui-monospace,Consolas,monospace" onclick="this.select()">{{ codes|join('\n') }}</textarea>
+    <div class="help muted small">点一下文本框会全选，再按 Ctrl+C。</div></details>
+</div>
+<div class="side-note"><h2>建议这样保存</h2><ul>
+  <li>点“下载为文本文件”，存进网盘或 U 盘</li>
+  <li>或者存进密码管理器（1Password、Bitwarden、浏览器密码本）</li>
+  <li>或者打印 / 手抄一份放在安全的地方</li>
+  <li>用掉几个之后，可以在“我的账号 → 重新绑定动态验证码”生成新的一套</li>
+</ul></div>
+</div>
+<script>function dlCodes(){var s=document.getElementById('codes').dataset.copy;var a=document.createElement('a');
+a.href=URL.createObjectURL(new Blob([s.replace(/\n/g,'\r\n')+'\r\n'],{type:'text/plain;charset=utf-8'}));a.download='备用码-{{ admin_user.username }}.txt';document.body.appendChild(a);a.click();a.remove()}</script>
+{% endblock %}

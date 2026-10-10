@@ -394,11 +394,45 @@ def sub_install_pkg(tok):
 @internal.get("/j/<tok>")
 def join_script(tok):
     p = _use_token(tok, "join")
-    console = get_setting("console_node_url", "").rstrip("/")
+    console = (p.get("console") or get_setting("console_node_url", "")).rstrip("/")
     pre = "".join(f"export {k}={_shq(v)}\n" for k, v in {
         "JOIN_TOKEN": tok, "CONSOLE_URL": console, "NODE_NAME": p.get("name", ""),
-        "NODE_DOMAIN": p.get("domain", ""), "CF_TOKEN": p.get("cf_token", ""), "TS_KEY": p.get("ts_key", "")}.items())
+        "NODE_DOMAIN": p.get("domain", ""), "CF_TOKEN": p.get("cf_token", ""), "TS_KEY": p.get("ts_key", ""),
+        "CF_AUTO": "1" if p.get("cf_auto") else ""}.items())
     return Response(_script("join.sh").replace("#__PRESET__", pre, 1), content_type="text/plain")
+
+
+@internal.get("/j/<tok>/env")
+def join_env(tok):
+    """参数方式启动的接入脚本加入 Tailscale 后来取这台的名称、域名等。"""
+    p = _use_token(tok, "join")
+    body = "".join(f"export {k}={_shq(v)}\n" for k, v in {
+        "NODE_NAME": p.get("name", "") or "node", "NODE_DOMAIN": p.get("domain", ""),
+        "CF_AUTO": "1" if p.get("cf_auto") else ""}.items())
+    return Response(body, content_type="text/plain; charset=utf-8")
+
+
+@internal.post("/j/<tok>/dns")
+def join_dns(tok):
+    """新服务器报上公网 IP，控制台用已添加的 Cloudflare 账号把节点域名解析过去（灰云），不用把令牌给服务器。"""
+    import ipaddress
+    from types import SimpleNamespace
+    from .. import cloudflare as cfmod
+    p = _use_token(tok, "join")
+    ip = (request.form.get("ip") or "").strip()
+    try:
+        if ipaddress.ip_address(ip).version != 4:
+            raise ValueError
+    except ValueError:
+        return Response("ERR IP 不对\n", 400, content_type="text/plain; charset=utf-8")
+    if not p.get("domain"):
+        return Response("ERR 没有设置节点域名\n", 400, content_type="text/plain; charset=utf-8")
+    fake = SimpleNamespace(domain=p["domain"], ip=ip, dns_zone_id="", dns_record_id="")
+    try:
+        msg = cfmod.ensure_node_record(fake)
+    except cfmod.CfError as e:
+        return Response(f"ERR {e}\n", content_type="text/plain; charset=utf-8")
+    return Response(f"OK {msg}\n", content_type="text/plain; charset=utf-8")
 
 
 @internal.post("/internal/join")
@@ -419,6 +453,12 @@ def join_register():
     s.add(srv)
     s.commit()
     audit("join.register", name, after={"panel_url": data["panel_url"], "ip": srv.ip})
+    if srv.domain and p.get("cf_auto"):
+        from .. import cloudflare as cfmod
+        try:
+            cfmod.ensure_node_record(srv)          # 记下记录 ID，以后“一键换 IP”直接改这条
+        except Exception:
+            pass
     return jsonify({"ok": True, "server_id": srv.id, "name": name})
 
 

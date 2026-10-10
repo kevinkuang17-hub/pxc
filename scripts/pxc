@@ -154,6 +154,19 @@ do_uninstall(){
   green "已卸载。数据还在 /var/lib/pxc 和 /etc/pxc，确认不要了可手动删除。"
 }
 
+do_tailscale(){
+  need_root
+  if ! command -v tailscale >/dev/null; then
+    yellow "安装 Tailscale…"; curl -fsSL https://tailscale.com/install.sh | sh >/dev/null || { red "安装失败"; return 1; }
+  fi
+  if tailscale ip -4 >/dev/null 2>&1; then green "已加入 Tailscale：$(tailscale ip -4 | head -1)"; return 0; fi
+  if [ -n "${1:-}" ]; then tailscale up --authkey="$1" --hostname=pxc-console --accept-dns=false
+  else
+    yellow "下面会出现一个登录链接，用浏览器打开并登录你的 Tailscale 账号即可"
+    tailscale up --hostname=pxc-console --accept-dns=false
+  fi
+  tailscale ip -4 >/dev/null 2>&1 && green "已加入 Tailscale：$(tailscale ip -4 | head -1)。控制台接入新服务器时会自动用这个地址"
+}
 menu(){
   echo
   green "  节点控制台 $(cat VERSION 2>/dev/null)  ·  角色：$( [ "$PXC_ROLE" = console ] && echo 控制台 || echo 订阅服务 )"
@@ -166,13 +179,14 @@ menu(){
   echo "  12. 申请 / 续期证书"
   echo "  13. 升级          14. 回退上一版本"
   echo "  15. 备份          16. 恢复"
-  echo "  17. 卸载           0. 退出"
+  echo "  17. 卸载          18. 加入 Tailscale"
+  echo "   0. 退出"
   echo "  ───────────────────────────"
   read -rp "  请选择：" n
   case "$n" in
     1) do_start;; 2) do_stop;; 3) do_restart;; 4) do_status;; 5) do_log;; 6) do_url;; 7) do_port;; 8) do_path;;
     9) do_reset_pw;; 10) do_reset_2fa;; 11) do_clear_allow;; 12) do_cert;; 13) do_update;; 14) do_rollback;;
-    15) do_backup;; 16) do_restore;; 17) do_uninstall;; 0|"") exit 0;; *) red "没有这个选项";;
+    15) do_backup;; 16) do_restore;; 17) do_uninstall;; 18) do_tailscale;; 0|"") exit 0;; *) red "没有这个选项";;
   esac
 }
 
@@ -187,6 +201,7 @@ case "${1:-}" in
   set) need_root; cli set "${2:?缺少设置名}" "${3:-}";;
   get) cli get "${2:?缺少设置名}";;
   install-xray) do_install_xray;;
+  tailscale) do_tailscale "${2:-}";;
   version) cat VERSION;;
   *) echo "用法：pxc [start|stop|restart|status|log|url|port N|path X|reset-password|reset-2fa|clear-allowlist|cert 域名 令牌|update|rollback|backup|restore 文件|cf-firewall|install-xray|uninstall|version]";;
 esac

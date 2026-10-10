@@ -5,6 +5,7 @@
 {% if brand.favicon %}<link rel="icon" href="{{ url_for('admin.static_brand', name=brand.favicon) }}">{% endif %}
 <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ version }}">
 <style>:root{--c:{{ theme }}}</style>
+<script>try{var _t=localStorage.getItem('pxc-theme');if(_t)document.documentElement.setAttribute('data-theme',_t)}catch(e){}</script>
 </head><body>
 {% set ep = request.endpoint or '' %}
 {% set nav_res = request.view_args.get('res') if request.view_args else None %}
@@ -40,7 +41,8 @@
 </aside>
 <div class="main">
   <div class="top"><h1>{% block h1 %}{% endblock %}</h1>
-    <div class="who">{% if admin_user %}<a href="{{ url_for('admin.me') }}">{{ admin_user.username }}</a> · <a href="{{ url_for('admin.logout') }}">退出</a>{% endif %}</div></div>
+    <div class="tools"><button class="theme-btn" type="button" onclick="toggleTheme()" title="切换明暗主题">◐ 主题</button>
+    <div class="who">{% if admin_user %}<a href="{{ url_for('admin.me') }}">{{ admin_user.username }}</a> · <a href="{{ url_for('admin.logout') }}">退出</a>{% endif %}</div></div></div>
   <div class="content">{% block body %}{% endblock %}</div>
   {% if footer %}<div class="foot">{{ footer }}</div>{% endif %}
 </div></div>
@@ -52,7 +54,7 @@
   <div class="body" id="flashbody">{% for c, m in msgs %}{{ m }}{% if not loop.last %}
 {% endif %}{% endfor %}</div>
   <div class="acts">
-    {% if cat == 'error' %}<button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('flashbody').innerText);this.textContent='已复制'">复制报错</button>{% endif %}
+    {% if cat == 'error' %}<button class="btn" onclick="copyText('flashbody',this)">复制报错</button>{% endif %}
     <button class="btn p" onclick="document.getElementById('flash').remove()">知道了</button>
   </div></div></div>
 {% if cat == 'ok' %}<script>setTimeout(function(){var e=document.getElementById('flash');e&&e.remove()},3000)</script>{% endif %}
@@ -63,6 +65,18 @@ document.addEventListener('submit',function(e){var f=e.target;if(f.dataset.confi
 document.addEventListener('pointermove',function(e){var el=e.target.closest&&e.target.closest('[data-tip]');
 if(!el){t.style.display='none';return}t.textContent=el.getAttribute('data-tip');t.style.display='block';
 var x=e.clientX+14,y=e.clientY+14;if(x+t.offsetWidth>innerWidth-8)x=e.clientX-t.offsetWidth-14;t.style.left=x+'px';t.style.top=y+'px'})})();
-function copyText(id,btn){navigator.clipboard.writeText(document.getElementById(id).innerText);btn.textContent='已复制';setTimeout(function(){btn.textContent='复制'},1500)}
+function copyRaw(text){
+  if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text).then(function(){return true},function(){return legacyCopy(text)})}
+  return Promise.resolve(legacyCopy(text))}
+function legacyCopy(text){var ta=document.createElement('textarea');ta.value=text;
+  ta.style.cssText='position:fixed;left:50%;top:50%;width:2em;height:2em;padding:0;border:0;outline:0;box-shadow:none;background:transparent;opacity:.01;z-index:-1';
+  document.body.appendChild(ta);var y=window.scrollY;ta.focus({preventScroll:true});ta.select();ta.setSelectionRange(0,text.length);
+  var ok=false;try{ok=document.execCommand('copy')}catch(e){}document.body.removeChild(ta);window.scrollTo(0,y);return ok}
+function toggleTheme(){var r=document.documentElement,cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  var n=cur==='dark'?'light':'dark';r.setAttribute('data-theme',n);try{localStorage.setItem('pxc-theme',n)}catch(e){}}
+function copyText(id,btn,text){var el=document.getElementById(id);var s=text||(el.dataset.copy||el.innerText);
+  if(!btn.dataset.label)btn.dataset.label=btn.textContent;var old=btn.dataset.label;
+  copyRaw(s).then(function(ok){btn.textContent=ok?'已复制':'复制失败，请手动选中';setTimeout(function(){btn.textContent=old},1800);
+    if(!ok&&el){var rg=document.createRange();rg.selectNodeContents(el);var sel=getSelection();sel.removeAllRanges();sel.addRange(rg)}})}
 </script>
 </body></html>

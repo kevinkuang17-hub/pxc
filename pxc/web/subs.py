@@ -213,6 +213,60 @@ def ruleset_file(rid, ext):
 
 
 _rendered = {}
+_rt_cache = {}
+_rt_lock = threading.Lock()
+
+
+def _fetch_public(url):
+    """只拉公网 https 地址，不跟随跳转，最多 8 MB，HTML 错误页当作失败。"""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    u = urlparse(url)
+    if u.scheme != "https" or not u.hostname:
+        return None
+    try:
+        for info in socket.getaddrinfo(u.hostname, 443, proto=socket.IPPROTO_TCP):
+            ip = ipaddress.ip_address(info[4][0])
+            if not ip.is_global:
+                return None
+        r = requests.get(url, timeout=20, headers={"User-Agent": "pxc"}, allow_redirects=False, stream=True)
+        if r.status_code != 200:
+            return None
+        data = r.raw.read(8 * 1024 * 1024 + 1, decode_content=True)
+        if len(data) > 8 * 1024 * 1024:
+            return None
+        text = data.decode("utf-8", "ignore")
+        if text.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+            return None
+        return text
+    except (OSError, ValueError, requests.RequestException):
+        return None
+
+
+@bp.route("/rt/<tid>/<int:idx>.json")
+def template_ruleset(tid, idx):
+    """规则模板里的远程列表转成 sing-box 规则集（只转模板里列出的地址，不是开放代理）。"""
+    from .. import ruletpl
+    tpl = (provider.get().get("templates") or {}).get(tid)
+    if not tpl or idx >= len(tpl["rules"]) or tpl["rules"][idx].get("kind") != "RULESET":
+        abort(404)
+    url = ruletpl.sing_source_url(tpl["rules"][idx]["url"])
+    hit = _rt_cache.get(url)
+    if not hit or time.time() - hit[0] > 12 * 3600:
+        with _rt_lock:                         # 同一时间只去上游拉一次
+            hit = _rt_cache.get(url)
+            if not hit or time.time() - hit[0] > 12 * 3600:
+                body = _fetch_public(url)
+                if body is not None:
+                    hit = (time.time(), ruletpl.convert_list(body))
+                    _rt_cache[url] = hit
+                elif hit:
+                    _rt_cache[url] = (time.time() - 11 * 3600, hit[1])    # 上游暂时不通：1 小时后再试
+    if not hit:
+        hit = (0, json.dumps({"version": 2, "rules": []}))          # 拉不到也给个空规则集，别让 sing-box 启动失败
+    return Response(hit[1], content_type="application/json; charset=utf-8",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 def serve(c, snap):

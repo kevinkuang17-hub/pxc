@@ -1,5 +1,6 @@
 :root{--c:#2563eb;--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--text:#1f2937;--muted:#6b7280;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--side:#111827;--sidetext:#cbd5e1;--r:10px}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--line:#262b35;--text:#e5e7eb;--muted:#9aa3b2;--side:#0b0d11}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1115;--card:#171a21;--line:#262b35;--text:#e5e7eb;--muted:#9aa3b2;--side:#0b0d11}}
+:root[data-theme=dark]{--bg:#0f1115;--card:#171a21;--line:#262b35;--text:#e5e7eb;--muted:#9aa3b2;--side:#0b0d11}
 *{box-sizing:border-box}html,body{margin:0}body{font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
 a{color:var(--c);text-decoration:none}a:hover{text-decoration:underline}
 .layout{display:flex;min-height:100vh}
@@ -16,7 +17,13 @@ a{color:var(--c);text-decoration:none}a:hover{text-decoration:underline}
 .top{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--line);background:var(--card)}
 .top h1{font-size:16px;margin:0;font-weight:600}
 .top .who{color:var(--muted);font-size:13px}
-.content{padding:20px 24px;max-width:1280px}
+.content{padding:20px 24px;max-width:1680px;width:100%}
+.cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(280px,2fr);gap:16px;align-items:start}
+@media (max-width:1100px){.cols{grid-template-columns:1fr}}
+.side-note{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.side-note h2{font-size:14px;margin:0 0 10px}.side-note ol,.side-note ul{margin:0;padding-left:18px}.side-note li{margin:4px 0;color:var(--muted)}
+.top .tools{display:flex;align-items:center;gap:14px}
+.theme-btn{border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:99px;padding:2px 10px;cursor:pointer;font-size:12px}
 .foot{color:var(--muted);font-size:12px;padding:16px 24px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:16px}
 .card h2{font-size:14px;margin:0 0 12px;font-weight:600}
@@ -41,10 +48,12 @@ td.wrap{white-space:normal}
 .tag.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent)}
 .tag.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .tag.c{color:var(--c);border-color:color-mix(in srgb,var(--c) 40%,transparent)}
-form.f .row{display:grid;grid-template-columns:180px 1fr;gap:6px 16px;align-items:start;padding:7px 0}
+form.f .row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:6px 16px;align-items:start;padding:7px 0}
+form.f .row input[type=text],form.f .row input[type=password],form.f .row input[type=url],form.f .row input[type=date],form.f .row select,form.f .row textarea{max-width:none}
+.codes{font-size:15px}
 form.f label.l{color:var(--muted);padding-top:6px}
 form.f .help{color:var(--muted);font-size:12px;margin-top:3px}
-input[type=text],input[type=password],input[type=number],input[type=date],input[type=url],select,textarea{width:100%;max-width:520px;padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--text);font:inherit}
+input[type=text],input[type=password],input[type=number],input[type=date],input[type=url],select,textarea{width:100%;max-width:none;padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--text);font:inherit}
 textarea{min-height:80px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 select[multiple]{min-height:120px}
 input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--c) 30%,transparent);border-color:var(--c)}
@@ -69,7 +78,8 @@ ul.notes{margin:0;padding-left:18px}
 .auth input{max-width:none;margin-bottom:12px}.auth .btn{width:100%;justify-content:center;padding:9px}
 .auth .err{color:var(--err);font-size:13px;margin-bottom:10px;text-align:center}
 .qr svg{width:180px;height:180px;background:#fff;padding:6px;border-radius:8px}
-.codes{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;max-width:300px}
+.codes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;max-width:640px}.codes code{text-align:center;padding:6px 0}
+@media (max-width:760px){.codes{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:760px){.side{display:none}.content{padding:14px}form.f .row{grid-template-columns:1fr}}
 /* 图表（系列色经 dataviz 校验：亮色 #2a78d6/#eb6834，暗色 #3987e5/#d95926） */
 :root{--series-1:#2a78d6;--series-2:#eb6834;--axis:#8a8f98}

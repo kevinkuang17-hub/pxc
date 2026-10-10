@@ -30,7 +30,7 @@ ol{padding-left:20px;margin:6px 0}.muted{color:var(--muted);font-size:13px}
   {% for name, link, plat in links %}<a class="app" data-name="{{ name }}" href="{{ link }}"><span>{{ name }}<br><span class="muted">{{ plat }}</span></span><b>导入</b></a>{% endfor %}
 </div>
 <div class="card qr"><div class="k" style="text-align:left">或者用客户端扫码</div>{{ qr|safe }}
-  <p><code id="u">{{ url }}</code></p><button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('u').innerText);this.textContent='已复制'">复制订阅地址</button></div>
+  <p><code id="u">{{ url }}</code></p><button class="btn" onclick="pxcCopy(document.getElementById('u').innerText,this)">复制订阅地址</button></div>
 <div class="card"><div class="k">开启自动更新（只需设置一次）</div><ol>
   <li><b>Clash Verge / FlClash / Mihomo Party</b>：导入后自动按服务器建议的间隔更新。</li>
   <li><b>v2rayNG</b>：设置 → 订阅分组设置 → 打开“自动更新”。</li>
@@ -40,6 +40,9 @@ ol{padding-left:20px;margin:6px 0}.muted{color:var(--muted);font-size:13px}
 {% if s.sub_footer %}<p class="muted" style="text-align:center">{{ s.sub_footer }}</p>{% endif %}
 </div>
 <script>
+function pxcCopy(s,b){function lg(){var ta=document.createElement('textarea');ta.value=s;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();var ok=false;try{ok=document.execCommand('copy')}catch(e){}document.body.removeChild(ta);return ok}
+var p=(navigator.clipboard&&window.isSecureContext)?navigator.clipboard.writeText(s).then(function(){return true},lg):Promise.resolve(lg());
+p.then(function(ok){b.textContent=ok?'已复制':'复制失败，请长按地址手动复制'})}
 {% if c.expire %}document.getElementById('exp').textContent=new Date({{ c.expire }}*1000).toLocaleDateString();{% endif %}
 (function(){var u=navigator.userAgent,rec=/iPhone|iPad|Macintosh/.test(u)?['Shadowrocket','Happ']:/Android/.test(u)?['Clash Verge / Mihomo Party / FlClash','Happ','v2rayNG']:['Clash Verge / Mihomo Party / FlClash'];
 document.querySelectorAll('a.app').forEach(function(a){if(rec.indexOf(a.dataset.name)>=0){a.classList.add('rec');a.parentNode.insertBefore(a,a.parentNode.children[1])}})})();

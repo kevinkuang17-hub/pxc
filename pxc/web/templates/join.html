@@ -1,17 +1,58 @@
 {% extends "base.html" %}{% block h1 %}一键接入新服务器{% endblock %}{% block body %}
 {% if cmd %}
-<div class="card"><h2>在新 VPS 上用 root 粘贴执行这一行</h2>
+<div class="cols">
+<div class="card" style="border-color:var(--c)"><h2>在新 VPS 上用 root 粘贴执行这一行</h2>
   <div class="cmd"><pre id="cmd">{{ cmd }}</pre><button class="btn" onclick="copyText('cmd',this)">复制</button></div>
-  <p class="muted small">24 小时内有效、只能用一次。脚本会：安装 3X-UI 单机版 → 设置随机面板端口/路径/账号（避开 2096）→ 防火墙只放行 443 和控制台 → （可选）加入 Tailscale、用 Cloudflare 申请证书 → 注册到控制台。完成后服务器会出现在列表里（直接是“控制台接管”模式）。</p>
-  <a class="btn" href="{{ url_for('admin.r_list', res='servers') }}">返回服务器列表</a></div>
+  {% if info %}<ul class="small" style="margin:10px 0 0;padding-left:18px">{% for i in info %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
+  <p class="muted small">24 小时内有效、只能用一次。完成后服务器会自动出现在列表里（直接是“控制台接管”模式），再去“一键建线路”。</p>
+  <div style="display:flex;gap:8px"><a class="btn" href="{{ url_for('admin.server_join') }}">再接一台</a><a class="btn" href="{{ url_for('admin.r_list', res='servers') }}">返回服务器列表</a></div></div>
+<div class="side-note"><h2>脚本会自动做这些</h2><ol>
+  <li>安装 3X-UI 单机版，面板端口 / 路径 / 账号全部随机（避开 2096）</li>
+  <li>面板端口只允许控制台和 Tailscale 内网访问</li>
+  <li>加入 Tailscale（已设置 API 密钥时）</li>
+  <li>用已添加的 Cloudflare 账号解析节点域名（灰云），再自动申请证书并自动续期</li>
+  <li>开启 BBR，注册到控制台</li>
+</ol><p class="muted small" style="margin-top:10px">服务器上已经装了 3X-UI 时脚本会直接退出，不会动原来的面板和数据。</p></div>
+</div>
 {% else %}
-<form method="post" class="f card">
-  <div class="row"><label class="l">地区代码 *</label><div><input type="text" name="region" placeholder="HK" required maxlength="2" style="text-transform:uppercase"></div></div>
-  <div class="row"><label class="l">服务器名称</label><div><input type="text" name="name" placeholder="留空自动按顺序：HK A、HK B …"><div class="help">命名约定“地区代码 + 字母”，A 是这个地区第一台，B 第二台，以此类推</div></div></div>
-  <div class="row"><label class="l">节点域名</label><div><input type="text" name="domain" placeholder="hke.example.com"><div class="help">先在 Cloudflare 把它解析到新服务器 IP（灰云）。填了 Cloudflare 令牌会自动申请证书。</div></div></div>
-  <div class="row"><label class="l">控制台地址 *</label><div><input type="text" name="console_url" value="{{ console }}" placeholder="http://100.64.0.2:54321"><div class="help">新服务器能访问到的控制台地址，建议用 Tailscale 内网地址（控制台不上公网）</div></div></div>
-  <div class="row"><label class="l">Tailscale 授权密钥</label><div><input type="text" name="ts_key" placeholder="tskey-auth-…（可选）"><div class="help">填了会让新服务器加入 Tailscale，控制台经内网管理面板</div></div></div>
-  <div class="row"><label class="l">Cloudflare API 令牌</label><div><input type="text" name="cf_token" placeholder="可选，只需 Zone:Read + DNS:Edit"></div></div>
+<div class="cols">
+<form method="post" class="f card"><h2>新服务器</h2>
+  <div class="row"><label class="l">地区代码 *</label><div><input type="text" id="region" name="region" placeholder="HK" required maxlength="2" style="text-transform:uppercase" autofocus>
+    <div class="help" id="namehint">名称会自动按顺序排：HK A、HK B …</div></div></div>
+  <div class="row"><label class="l">服务器名称</label><div><input type="text" name="name" id="name" placeholder="留空自动"></div></div>
+  <div class="row"><label class="l">节点域名</label><div>
+    {% if zones %}<label style="display:block;margin-bottom:6px"><input type="checkbox" name="auto_domain" value="1" checked onchange="document.getElementById('dom').disabled=this.checked"> 自动用 <select name="zone" style="width:auto;display:inline-block">{% for z in zones %}<option>{{ z }}</option>{% endfor %}</select> 下的子域名（如 <span id="domhint">hka.{{ zones[0] }}</span>）</label>
+    <input type="text" name="domain" id="dom" placeholder="或者自己填，如 hke.example.com" disabled>
+    <div class="help">用左侧「Cloudflare」里已添加的账号自动解析到新服务器 IP（灰云）并申请证书，不用再填令牌</div>
+    {% else %}<input type="text" name="domain" placeholder="hke.example.com（可选）">
+    <div class="help">先在「Cloudflare」添加账号，控制台就能自动解析和申请证书；没添加的话，请自己把域名解析到新服务器 IP（灰云），脚本会等解析生效后申请证书</div>{% endif %}
+  </div></div>
+  <details style="margin:4px 0 8px"><summary class="muted small">高级（一般不用填）</summary>
+  <div class="row"><label class="l">Tailscale 授权密钥</label><div><input type="text" name="ts_key" placeholder="tskey-auth-…（设置了 API 密钥就会自动生成）">
+    <div class="help">没设置 API 密钥时，可以在 Tailscale 后台手动生成一个贴在这里</div></div></div>
+  <div class="row"><label class="l">控制台公网地址</label><div><input type="text" name="console_public_url" value="{{ public }}" placeholder="http://公网IP:端口">
+    <div class="help">只在不用 Tailscale 时需要：新服务器经这个地址下载脚本、注册到控制台</div></div></div>
+  </details>
   <div class="row"><span></span><div><button class="btn p">生成安装命令</button></div></div>
 </form>
+<div>
+<div class="side-note" style="margin-bottom:16px"><h2>自动处理</h2><ul>
+  <li><b>控制台地址</b>：{% if ts_ip %}自动用 Tailscale 内网地址 <code>{{ ts_ip }}</code>（新服务器先加入 Tailscale 再连控制台，控制台不用开公网）{% else %}<span style="color:var(--warn)">控制台还没加入 Tailscale</span>，在控制台服务器执行 <code>pxc tailscale</code>{% endif %}</li>
+  <li><b>Tailscale 授权密钥</b>：{% if has_ts_key and ts_ip %}每台自动生成一次性密钥{% elif not ts_ip %}控制台加入 Tailscale 后可自动生成{% else %}<span style="color:var(--warn)">在下面填一次 API 密钥后自动生成</span>{% endif %}</li>
+  <li><b>域名解析和证书</b>：{% if zones %}用已添加的 Cloudflare 账号（{{ zones|join('、') }}）{% else %}<a href="{{ url_for('admin.cf_accounts') }}">添加 Cloudflare 账号</a>后自动处理{% endif %}</li>
+</ul></div>
+<form method="post" class="side-note"><input type="hidden" name="act" value="ts_api"><h2>Tailscale API 密钥（只填一次）</h2>
+  <p class="muted small">Tailscale 后台 → Settings → Keys → Generate access token（tskey-api- 开头，最长 90 天）。填了以后每接入一台服务器自动生成一次性授权密钥，不用你去复制。</p>
+  <div style="display:flex;gap:8px"><input type="password" name="ts_api_key" placeholder="{{ '已设置（重新填写可替换，留空保存=清除）' if has_ts_key else 'tskey-api-…' }}" autocomplete="off"><button class="btn">保存</button></div>
+</form>
+</div>
+</div>
+<script>
+var NEXT={{ next_names|tojson }};
+function upd(){var r=(document.getElementById('region').value||'').toUpperCase();var n=document.getElementById('name').value||NEXT[r]||(r?r+' A':'HK A');
+  document.getElementById('namehint').textContent='这台会叫：'+n;var d=document.getElementById('domhint');
+  if(d){var z=document.querySelector('select[name=zone]');d.textContent=n.toLowerCase().replace(/[^a-z0-9]/g,'')+'.'+(z?z.value:'')}}
+['region','name'].forEach(function(i){document.getElementById(i).addEventListener('input',upd)});
+var zs=document.querySelector('select[name=zone]');if(zs)zs.addEventListener('change',upd);upd();
+</script>
 {% endif %}{% endblock %}

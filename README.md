@@ -59,6 +59,12 @@
 - **内核灰度升级**：「内核升级」页选版本 → 先升一台金丝雀，观察 30 分钟没问题再逐台升级；每台升级后检查 Xray 运行、版本、线路握手，不通过自动装回原版本并暂停。
 - **一键部署改为直接从 GitHub 安装**，不用上传任何文件；也提供 Docker Compose 方式。
 
+### v0.5.0
+
+- **分流规则一键导入**：「分流规则」页直接导入 [Aethersailor/Custom_OpenClash_Rules](https://github.com/Aethersailor/Custom_OpenClash_Rules) 的标准版 / 精简版 / 全分组版 / GFW 版（远程引用、每天自动更新），也可以填任何 subconverter 格式的 .ini 地址（如 ACL4SSR）。全新安装默认就用标准版；已经在用的系统不会自动切换，在页面上点“设为默认”即可。Clash Meta / Mihomo / OpenClash / sing-box 用完整规则（已用真实 mihomo、sing-box 校验通过），Surge / Loon / QX / Stash 自动用内置标准规则。
+- **一键接入全自动**：控制台地址自动用 Tailscale 内网地址；填一次 Tailscale API 密钥后，每台新服务器自动生成一次性授权密钥，新服务器先加入 Tailscale 再连控制台，控制台不用开公网；节点域名自动用已添加的 Cloudflare 账号解析（灰云）并申请证书，不用再填令牌；没添加 Cloudflare 的话，脚本会等你手动解析生效后用 80 端口申请证书。控制台加入 Tailscale：服务器上执行 `pxc tailscale`。
+- 复制按钮在 http 地址下也能用；备用码页面多了下载和手动全选；页面铺满宽度；右上角可切换明暗主题。
+
 ---
 
 ## 一、安装控制台

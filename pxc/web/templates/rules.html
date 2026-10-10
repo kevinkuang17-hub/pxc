@@ -5,11 +5,31 @@
   <a class="btn" href="{{ url_for('admin.rules_test') }}">测试：这个网站走哪</a>
   {% if not sets %}<form method="post"><input type="hidden" name="act" value="seed"><button class="btn">一键建好常用规则</button></form>{% endif %}
 </div>
-<div class="card"><h2>规则方案</h2><p class="muted small">方案 = 有顺序的“规则集 → 策略”。套餐绑定一个默认方案，用户可单独换；用户的需求开关（AI 走美国、广告拦截…）排在方案前面。没设方案的用户用内置标准规则。</p>
-<div class="tbl"><table><thead><tr><th>名称</th><th>规则</th><th>兜底</th><th>版本</th></tr></thead><tbody>
-{% for p in profiles %}{% set its = p.items|fromjson %}<tr><td><a href="{{ url_for('admin.profile_edit', pid=p.id) }}">{{ p.name }}</a></td>
-<td class="wrap small">{% for it in its %}{% for rs in sets if rs.id == it.ruleset_id %}{{ rs.name }} → {{ it.policy }}{% endfor %}{% if not loop.last %} · {% endif %}{% endfor %}</td>
-<td>{{ p.final_policy }}</td><td>v{{ p.version }}</td></tr>{% else %}<tr><td colspan="4" class="muted">还没有方案</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="cols">
+<div class="card"><h2>一键导入成熟规则（推荐）</h2>
+<p class="muted small">直接用市面上维护得最好的分流规则，按服务分好组（AI、YouTube、Netflix、谷歌、苹果、游戏…）和地区自动测速组，规则文件远程引用、每天自动更新，不用自己建。来源：<a href="https://github.com/Aethersailor/Custom_OpenClash_Rules" target="_blank" rel="noopener">Aethersailor/Custom_OpenClash_Rules</a>（CC BY-SA 4.0）。Clash Meta / Mihomo / OpenClash / sing-box 用完整规则；Surge、Loon、QX、Stash 不支持这些规则格式，自动改用内置标准规则。</p>
+<div class="tbl"><table><tbody>
+{% for name, url, note in presets %}<tr><td><b>{{ name }}</b><div class="muted small">{{ note }}</div></td>
+<td style="width:1%">{% if url in have_urls %}<span class="tag ok">已导入</span>{% else %}<form method="post"><input type="hidden" name="act" value="tpl_preset"><input type="hidden" name="i" value="{{ loop.index0 }}"><button class="btn sm p">一键导入</button></form>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div></div>
+<form method="post" class="side-note"><input type="hidden" name="act" value="tpl_url"><h2>导入其它远程模板</h2>
+<p class="muted small">任何 subconverter 格式的外部配置（.ini，比如 ACL4SSR）都可以，填网址即可，每天自动更新。</p>
+<input type="text" name="url" placeholder="https://raw.githubusercontent.com/…/xxx.ini" style="margin-bottom:8px">
+<input type="text" name="name" placeholder="名称（可选）" style="margin-bottom:8px">
+<label class="small" style="display:block;margin-bottom:8px"><input type="checkbox" name="make_default" value="1"> 导入后设为默认方案</label>
+<button class="btn">导入</button></form>
+</div>
+<div class="card"><h2>规则方案</h2><p class="muted small">套餐可以绑定一个方案，用户也可以单独换；都没选的用“默认方案”。</p>
+<div class="tbl"><table><thead><tr><th>名称</th><th>类型</th><th>内容</th><th>状态</th><th></th></tr></thead><tbody>
+{% for p in profiles %}<tr><td><a href="{{ url_for('admin.profile_edit', pid=p.id) }}">{{ p.name }}</a>{% if default_id == p.id|string %} <span class="tag c">默认</span>{% endif %}</td>
+<td>{{ '远程模板' if p.kind == 'template' else '自己配置' }}</td>
+{% if p.kind == 'template' %}<td class="small">{% if stats.get(p.id) %}{{ stats[p.id][0] }} 个策略组 · {{ stats[p.id][1] }} 条规则{% else %}—{% endif %}</td>
+<td>{% if p.template_error and not p.template_content %}<span class="tag err">下载失败</span>{% elif p.template_error %}<span class="tag warn">更新失败，用上次的</span>{% else %}<span class="tag ok">{{ fmt_dt(p.template_fetched_at) }} 更新</span>{% endif %}</td>
+{% else %}{% set its = p.items|fromjson %}<td class="wrap small">{% for it in its %}{% for rs in sets if rs.id == it.ruleset_id %}{{ rs.name }} → {{ it.policy }}{% endfor %}{% if not loop.last %} · {% endif %}{% endfor %}{% if its %} · {% endif %}其它 → {{ p.final_policy }}</td><td><span class="tag">v{{ p.version }}</span></td>{% endif %}
+<td style="width:1%">{% if default_id != p.id|string %}<form method="post"><input type="hidden" name="act" value="default"><input type="hidden" name="pid" value="{{ p.id }}"><button class="btn sm">设为默认</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">还没有方案</td></tr>{% endfor %}
+{% if default_id %}<tr><td colspan="5" class="small"><form method="post" style="display:inline"><input type="hidden" name="act" value="default"><input type="hidden" name="pid" value=""><button class="btn sm">不用默认方案（没选方案的用户用内置标准规则）</button></form></td></tr>{% endif %}
+</tbody></table></div></div>
 <div class="card"><h2>规则集</h2>
 <div class="tbl"><table><thead><tr><th>名称</th><th>来源</th><th>条数</th><th>版本</th><th>最近拉取</th><th>状态</th><th>被哪些方案使用</th></tr></thead><tbody>
 {% for r in sets %}<tr><td><a href="{{ url_for('admin.ruleset_edit', rid=r.id) }}">{{ r.name }}</a></td>

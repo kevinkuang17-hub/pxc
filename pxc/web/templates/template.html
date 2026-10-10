@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% block h1 %}规则模板 · {{ p.name }}{% endblock %}{% block body %}
+<div class="toolbar"><a class="btn" href="{{ url_for('admin.rules_home') }}">返回分流规则</a>
+  <form method="post"><input type="hidden" name="act" value="refresh"><button class="btn p">立即更新</button></form>
+  {% if is_default %}<span class="tag c">默认方案</span>{% endif %}<span class="sp"></span>
+  <form method="post" data-confirm="删除这个规则模板？"><input type="hidden" name="act" value="delete"><button class="btn d">删除</button></form></div>
+<div class="cols">
+<form method="post" class="f card"><input type="hidden" name="act" value="save"><h2>来源</h2>
+  <div class="row"><label class="l">名称</label><div><input type="text" name="name" value="{{ p.name }}"></div></div>
+  <div class="row"><label class="l">远程地址</label><div><input type="text" name="url" value="{{ p.template_url }}"><div class="help">每天自动更新；更新失败继续用上次的内容</div></div></div>
+  <div class="row"><label class="l">最近更新</label><div style="padding-top:6px">{{ fmt_dt(p.template_fetched_at) }} · v{{ p.version }}{% if p.template_error %} · <span style="color:var(--err)">{{ p.template_error }}</span>{% endif %}</div></div>
+  <div class="row"><span></span><div><button class="btn">保存</button></div></div>
+</form>
+<div class="side-note"><h2>怎么用</h2><ul>
+  <li>「套餐」里给套餐选这个方案，或在用户编辑页“分流”单独选</li>
+  <li>点“设为默认”后，没选方案的套餐和用户都用它</li>
+  <li>地区组（🇭🇰 香港节点…）按节点名自动归类，节点名是“🇭🇰 HK A”这种格式，会自动进对应地区</li>
+  <li>你的线路组（HK A、US A…）会加到第一个选择组里</li>
+</ul></div>
+</div>
+{% if tpl %}
+<div class="card"><h2>策略组（{{ tpl.groups|length }}）</h2><div class="tbl"><table><thead><tr><th>名称</th><th>类型</th><th>成员</th></tr></thead><tbody>
+{% for g in tpl.groups %}<tr><td>{{ g.name }}</td><td>{{ {'select':'手动选择','url-test':'自动测速','fallback':'故障转移','load-balance':'负载均衡'}.get(g.type, g.type) }}</td>
+<td class="wrap small">{% for m in g.members %}{% if m.ref %}{{ m.ref }}{% else %}<span class="muted" title="{{ m.re }}">按名字匹配的节点</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><h2>规则（{{ tpl.rules|length }}，从上到下匹配）</h2><div class="tbl"><table><thead><tr><th>#</th><th>匹配</th><th>走</th></tr></thead><tbody>
+{% for r in tpl.rules %}<tr><td class="muted">{{ loop.index }}</td><td class="wrap small">{% if r.kind == 'MATCH' %}其它所有{% elif r.kind == 'RULESET' %}远程列表 <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url.split('/')[-1] }}</a>{% else %}{{ r.kind }} {{ r.value }}{% endif %}</td><td>{{ r.group }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endif %}
+{% endblock %}

@@ -417,7 +417,7 @@ RESOURCES = {
             F("device_limit", "设备数", "int", default=0, help="0 = 不限（节点按同时在线 IP 限制）"),
             F("groups", "包含线路组", "multi", choices=_groups, get=_plan_groups_get, set=_plan_groups_set,
               after_flush=True),
-            F("rule_profile_id", "默认分流方案", "select", choices=_profiles("（内置标准规则）"), coerce=int),
+            F("rule_profile_id", "默认分流方案", "select", choices=_profiles("（用默认方案）"), coerce=int),
         ]},
     "clients": {
         "title": "用户", "model": Client, "order": Client.name, "check": client_check, "detail": True,
