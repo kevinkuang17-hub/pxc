@@ -198,7 +198,8 @@ def compute_diff(server, state, remote_rows, tpl):
             elif not is_subset({k: want[k] for k in CLIENT_CMP_KEYS if k in want}, have[key]) or (
                     server.mode == "managed" and (have[key].get("totalGB") or have[key].get("expiryTime"))):
                 # 接管后节点上残留的旧流量上限/到期会让 3X-UI 自己停用用户，需清零
-                ops.append({"op": "update_client", "tag": tag, "remote_id": row["id"], "key": key})
+                ops.append({"op": "update_client", "tag": tag, "remote_id": row["id"], "key": key,
+                            "email": have[key].get("email")})
                 notes.append(f"入站 {tag} 更新用户 {want['email']}")
         for key, c in have.items():
             if key not in d["clients"]:
@@ -371,9 +372,9 @@ def push_server(server_id, dry_run=False, reason=""):
                 if op["op"] == "add_client":
                     add_batches.setdefault(op["remote_id"], []).append(d["clients"][op["key"]])
                 elif op["op"] == "update_client":
-                    xc.update_client(op["remote_id"], op["key"], d["clients"][op["key"]])
+                    xc.update_client(op["remote_id"], op["key"], d["clients"][op["key"]], old_email=op.get("email"))
                 elif op["op"] == "del_client":
-                    xc.del_client(op["remote_id"], op["key"])
+                    xc.del_client(op["remote_id"], op["key"], op.get("email"))
             for rid, batch in add_batches.items():
                 xc.add_clients(rid, batch)
         except (XuiError, ValueError) as e:

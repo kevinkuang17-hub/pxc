@@ -4,6 +4,7 @@
   <form method="post"><input type="hidden" name="act" value="check"><button class="btn">立即核对域名/证书</button></form>
   <form method="post"><input type="hidden" name="act" value="exits"><button class="btn">立即测落地</button></form>
   <form method="post"><input type="hidden" name="act" value="chain"><button class="btn">经线路实测出口 / 解锁</button></form>
+  <form method="post" data-confirm="更换控制台的探测账号？各服务器会自动更新，旧账号立即失效。"><input type="hidden" name="act" value="rotate_probe"><button class="btn">更换探测账号</button></form>
   <a class="btn" href="{{ url_for('admin.health') }}">刷新</a>
   <span class="sp"></span>
   <form method="post"><input type="hidden" name="act" value="toggle_auto"><button class="btn">{{ '自动摘除：开' if auto else '自动摘除：关' }}</button></form>

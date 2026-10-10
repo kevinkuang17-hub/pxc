@@ -80,6 +80,10 @@ requests.post(f"{API}/clients/{c['id']}/renew", headers=H, json={"days": 30})
 | `reality_target` | Reality 伪装目标不可用（不可达 / 非 TLS1.3 / 不支持 h2） |
 | `consistency` | 域名解析 / 证书 / SNI / 小黄云核对出现新的不一致 |
 | `ruleset_review` | 远程规则集变化超过 20%，等待在后台确认 |
+| `exit_down` | 落地连续 3 次连不上 |
+| `exit_failover` / `exit_restore` | 线路已切到备用落地 / 已切回主落地 |
+| `exit_ip` | 经线路实测的出口 IP 和预期不符 |
+| `unlock_change` | ChatGPT / Claude / Gemini / Netflix / YouTube 解锁情况变化 |
 
 ```json
 {"event": "traffic_80", "id": 12, "at": "2026-10-10T02:00:00Z",

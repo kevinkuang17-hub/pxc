@@ -107,6 +107,15 @@ def health():
             else:
                 threading.Thread(target=_bg, daemon=True).start()
                 flash("已开始经线路实测，每条线路约 10–20 秒，几分钟后刷新本页看结果", "ok")
+        elif act == "rotate_probe":
+            r = sensitive()
+            if r:
+                return r
+            import uuid as _u
+            set_setting("probe_uuid", str(_u.uuid4()))
+            audit("probe.rotate", "probe", operator=g.admin.username)
+            changed("更换探测账号")
+            flash("已更换探测账号，接管中的服务器会自动更新", "ok")
         elif act == "exits":
             res = monitor.probe_exits()
             flash(f"已测 {res['exits']} 个落地" + (f"；切到备用：{', '.join(res['switched'])}" if res["switched"] else "") +

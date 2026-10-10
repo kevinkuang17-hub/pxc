@@ -34,6 +34,7 @@ class MockXui:
         self.xray_error = ""
         self.restarts = 0
         self.fail_next_restart = False
+        self.v3_clients = False           # True = 模拟新版 3X-UI：旧的按入站改用户接口没了，改用 /panel/api/clients/
         self.app = self._make_app()
         self.srv = make_server("127.0.0.1", 0, self.app, threaded=True)
         self.port = self.srv.server_port
@@ -125,6 +126,32 @@ class MockXui:
                 return None
             if not authed():
                 return ("", 404)
+            p = request.path
+            if self.v3_clients and ("addClient" in p or "updateClient" in p or "delClient" in p):
+                return ("", 404)
+            if not self.v3_clients and p.startswith(b + "/panel/api/clients/"):
+                return ("", 404)
+
+        @app.post(b + "/panel/api/clients/add")
+        def v3_add():
+            d = request.get_json()
+            c = d["client"]
+            if c.get("email") in self._all_emails():
+                return fail("Duplicate email")
+            for iid in d["inboundIds"]:
+                row = next(r for r in self.inbounds if r["id"] == iid)
+                row["settings"].setdefault("clients", []).append(dict(c))
+                self._sync_stats(row)
+            return ok()
+
+        @app.post(b + "/panel/api/clients/del/<email>")
+        def v3_del(email):
+            for row in self.inbounds:
+                before = len(row["settings"].get("clients", []))
+                row["settings"]["clients"] = [c for c in row["settings"].get("clients", []) if c.get("email") != email]
+                if len(row["settings"]["clients"]) != before:
+                    self._sync_stats(row)
+            return ok()
 
         @app.post(b + "/login")
         def login():

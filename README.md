@@ -35,7 +35,15 @@
 - **地区组**：分流方案和需求开关里的策略写地区代码（US / HK / JP …）。生成订阅时自动建一个地区组（如 🇺🇸 US），里面按 US A → US B → … 顺序主备切换：A 不通才用 B。v0.2.0 里写的“美国 / 香港”不用改，自动当作 US / HK。
 - **升级不覆盖数据**：升级只换程序目录，配置、数据库、加密密钥、Logo 都不动；升级前先停服务、完整备份（保留最近 10 次）；升级后逐表核对数据条数，少了一条或服务起不来，自动还原数据并回到旧版本。数据库结构变化只会“加”，不会删列删表。一键接入脚本遇到已经装了 3X-UI 的服务器会直接退出，不重装、不改它的端口账号和数据库。
 
-**下一版**：sing-box agent 与 Hysteria2/TUIC、路由器分运营商探针（接你的 KWRT 监控）、出口 IP 实测与解锁检测、Surge / QX / Loon 订阅、多管理员角色、Passkey、应用/国家维度报表。
+### v0.3.0
+
+- **Hysteria2**：新版 Xray（3X-UI 3.x 自带）原生支持 Hysteria2，并能按用户统计流量，所以直接走 3X-UI 推送，不需要另装 sing-box。入站协议选“Hysteria2”，或「一键建线路」选 Hysteria2（需要证书，UDP 端口自动分配）；订阅四种格式都带上（`hysteria2://`、Clash `hysteria2`、sing-box `hysteria2`）。需要节点上的 3X-UI 是 3.x 版本。
+- **落地故障自动切换**：线路可设“备用出站”。控制台每分钟测一次每个落地，主落地连续 3 次连不上就自动切到备用并推送到入口服务器，连续 3 次恢复后切回；所有落地同时连不上时判断为控制台网络问题，不切换。订阅里的地区旗帜跟着实际出口走。
+- **经线路实测出口 IP 和解锁**：控制台本机用 Xray 经每条线路访问 IP 查询接口和 ChatGPT / Claude / Gemini / Netflix / YouTube Premium，每 3 小时一次，出口 IP 和预期不符、解锁情况变化都会告警。为此控制台会在接管中的服务器入站里加一个探测账号（不计流量、不显示在用户里，观察期不加）；「监控与核对」页可一键更换。控制台需要 xray 程序，安装脚本会自动下载，也可执行 `pxc install-xray`。
+- **兼容新版 3X-UI 用户接口**：新版 3X-UI 把用户接口挪到了 `/panel/api/clients/`，控制台自动识别，新旧版本都能推送。
+- 生成的 VLESS（TCP+TLS+Vision / XHTTP / Reality）、Trojan、Hysteria2 配置都用真实 Xray 内核跑通过（服务端 + 客户端互通）。
+
+**下一版**：路由器分运营商探针（接你的 KWRT 监控）、Hysteria2 线路的自动摘除（现在只在 3 小时一次的实测里发现问题）、Surge / QX / Loon 订阅、多管理员角色、Passkey、应用/国家维度报表、TUIC / AnyTLS（需要 sing-box 节点）。
 
 ---
 
@@ -45,10 +53,10 @@
 
 **方式 A：直接用安装包（最快）**
 
-把 `pxc-v0.2.0.tar.gz` 传到服务器 `/root/`（WinSCP、或你平时 `scp` 的方式），然后 SSH 登录服务器，用 root 粘贴这一行：
+把 `pxc-v0.3.0.tar.gz` 传到服务器 `/root/`（WinSCP、或你平时 `scp` 的方式），然后 SSH 登录服务器，用 root 粘贴这一行：
 
 ```
-cd /root && tar xzf pxc-v0.2.0.tar.gz && bash pxc-release/scripts/install.sh
+cd /root && tar xzf pxc-v0.3.0.tar.gz && bash pxc-release/scripts/install.sh
 ```
 
 **方式 B：GitHub 自动发布（以后升级只需 `pxc update`）**

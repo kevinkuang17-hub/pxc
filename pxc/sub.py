@@ -83,6 +83,8 @@ def node_of(line):
         if es.maintenance or es.status == "offline":
             return None
     region = (line.exit_region or srv.region or "").upper()
+    if line.using_backup and ob and ob.type in ("exit", "chain") and ob.exit_inbound:
+        region = (ob.exit_inbound.server.region or region).upper()   # 切到备用落地时按实际出口地区显示
     name = f"{FLAGS.get(region, '🌐')} {line.name}" + (f" {line.label}" if line.label else "")
     if line.retiring_at:
         name += " ⚠即将下线"

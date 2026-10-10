@@ -203,3 +203,26 @@ def test_client_outbound_shapes():
     assert o["streamSettings"]["realitySettings"]["publicKey"] == "PUB"
     h = client_outbound(dict(n, protocol="hysteria", network="hysteria", security="tls", alpn=["h3"]), "U")
     assert h["streamSettings"]["hysteriaSettings"]["auth"] == "U" and h["settings"]["version"] == 2
+
+
+def test_new_3xui_clients_api(world):
+    """新版 3X-UI 没有按入站改用户的旧接口，自动改用 /panel/api/clients/。"""
+    from pxc.importer import import_servers
+    from pxc.models import Client, Server, Session
+    from pxc.sync import push_server
+    world["hk"].v3_clients = True
+    import_servers([world["s_sg"].id, world["s_hk"].id])
+    s = Session()
+    srv = s.get(Server, world["s_hk"].id)
+    srv.mode = "managed"
+    eva = s.query(Client).filter_by(legacy_sub_id="evasub").one()
+    eva.vision = False                                   # 触发“更新用户”（改 flow）
+    s.commit()
+    push_server(srv.id)
+    cl = {c["email"]: c for c in world["hk"].find(44924)["settings"]["clients"]}
+    assert cl["eva-sga"]["flow"] == "" and any(e.startswith("pxc-probe") for e in cl)
+    eva.enabled, eva.disabled_reason = False, "manual"
+    s.commit()
+    push_server(srv.id)
+    assert "eva-sga" not in [c["email"] for c in world["hk"].find(44924)["settings"]["clients"]]
+    assert push_server(srv.id, dry_run=True)["ops"] == 0

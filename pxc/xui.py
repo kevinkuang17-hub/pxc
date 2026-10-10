@@ -69,7 +69,7 @@ class XuiClient:
             if isinstance(r, dict) and r.get("success") is False:
                 raise XuiError(f"{p}: {r.get('msg') or '面板返回失败'}")
             return r.get("obj") if isinstance(r, dict) else r
-        raise XuiError(f"面板没有这个接口：{', '.join(paths)}（版本不兼容？）") from last
+        raise NoEndpoint(f"面板没有这个接口：{', '.join(paths)}（版本不兼容？）") from last
 
     # ---------- 读取 ----------
 
@@ -139,16 +139,52 @@ class XuiClient:
     def del_inbound(self, remote_id):
         return self.call("POST", f"/panel/api/inbounds/del/{remote_id}")
 
+    # 用户接口有两代：3X-UI 2.x / 早期 3.x 在 /panel/api/inbounds/ 下按入站改用户；
+    # 新版 3.x 把用户挪到 /panel/api/clients/（按 email 全局管理、再挂到入站）。先试旧接口，没有就用新接口。
+    legacy_clients = None
+
+    def _new_client_body(self, c):
+        keep = ("email", "id", "password", "auth", "flow", "enable", "limitIp", "totalGB", "expiryTime", "subId",
+                "tgId", "reset")
+        return {k: v for k, v in c.items() if k in keep}
+
     def add_clients(self, remote_id, clients):
-        return self.call("POST", "/panel/api/inbounds/addClient",
-                         json={"id": remote_id, "settings": json.dumps({"clients": clients}, ensure_ascii=False)})
+        if self.legacy_clients is not False:
+            try:
+                r = self.call("POST", "/panel/api/inbounds/addClient",
+                              json={"id": remote_id, "settings": json.dumps({"clients": clients}, ensure_ascii=False)})
+                self.legacy_clients = True
+                return r
+            except NoEndpoint:
+                self.legacy_clients = False
+        for c in clients:
+            self.call("POST", "/panel/api/clients/add",
+                      json={"inboundIds": [remote_id], "client": self._new_client_body(c)})
 
-    def update_client(self, remote_id, client_key, client):
-        return self.call("POST", f"/panel/api/inbounds/updateClient/{client_key}",
-                         json={"id": remote_id, "settings": json.dumps({"clients": [client]}, ensure_ascii=False)})
+    def update_client(self, remote_id, client_key, client, old_email=None):
+        if self.legacy_clients is not False:
+            try:
+                r = self.call("POST", f"/panel/api/inbounds/updateClient/{client_key}",
+                              json={"id": remote_id, "settings": json.dumps({"clients": [client]}, ensure_ascii=False)})
+                self.legacy_clients = True
+                return r
+            except NoEndpoint:
+                self.legacy_clients = False
+        # 新接口的 update 改不了 UUID / flow，统一按“删了重建”处理，结果一致
+        self.del_client(remote_id, client_key, old_email or client.get("email"))
+        self.add_clients(remote_id, [client])
 
-    def del_client(self, remote_id, client_key):
-        return self.call("POST", f"/panel/api/inbounds/{remote_id}/delClient/{client_key}")
+    def del_client(self, remote_id, client_key, email=None):
+        if self.legacy_clients is not False:
+            try:
+                r = self.call("POST", f"/panel/api/inbounds/{remote_id}/delClient/{client_key}")
+                self.legacy_clients = True
+                return r
+            except NoEndpoint:
+                self.legacy_clients = False
+        if not email:
+            raise XuiError("新版面板删除用户需要 email")
+        self.call("POST", f"/panel/api/clients/del/{email}")
 
     def save_template(self, tpl):
         return self.call("POST", "/panel/xray/update", "/xui/xray/update",
@@ -171,6 +207,10 @@ class XuiClient:
 
 class _NotFound(XuiError):
     pass
+
+
+class NoEndpoint(XuiError):
+    """面板没有这个接口（版本差异），调用方可以换另一套接口。"""
 
 
 def _is_ip_host(url):

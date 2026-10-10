@@ -273,6 +273,12 @@ def _run_all(runner_cls, get, line_ids):
             report[line.name] = str(e)
             continue
         want = expected_exit_ip(line)
+        import ipaddress
+        try:
+            if ipaddress.ip_address(want).version != 4:
+                want = ""              # IP 查询接口只返回 IPv4，预期是 IPv6 时只记录不比对
+        except ValueError:
+            want = ""                  # 填的是域名等，只记录
         ok = (not want) or res["exit_ip"] == want
         detail = f"出口 {res['exit_ip']}" + (f"，预期 {want}" if want else "（没有预期 IP，只记录）")
         prev = _put(t, "exit_ip", ok, detail)
